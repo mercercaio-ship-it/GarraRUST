@@ -639,8 +639,9 @@ async fn add_provider(
                     })),
                 );
             };
+            let key = key.trim();
             let provider = garraia_agents::OpenAiProvider::new(
-                key.clone(),
+                key.to_string(),
                 body.model.clone(),
                 body.base_url.clone(),
             );
@@ -665,7 +666,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("openai/gpt-4o".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("openrouter");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("OPENROUTER_API_KEY", key);
@@ -688,7 +690,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("sansa-auto".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("sansa");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("SANSA_API_KEY", key);
@@ -711,7 +714,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("deepseek-chat".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("deepseek");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("DEEPSEEK_API_KEY", key);
@@ -734,7 +738,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("mistral-large-latest".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("mistral");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("MISTRAL_API_KEY", key);
@@ -756,7 +761,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("gemini-2.5-flash".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("gemini");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("GEMINI_API_KEY", key);
@@ -779,7 +785,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("tiiuae/falcon-180b-chat".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("falcon");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("FALCON_API_KEY", key);
@@ -802,8 +809,9 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("jais-adapted-70b-chat".to_string()));
+            let key = key.trim();
             let provider =
-                garraia_agents::OpenAiProvider::new(key.clone(), model, base_url).with_name("jais");
+                garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url).with_name("jais");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("JAIS_API_KEY", key);
         }
@@ -821,8 +829,9 @@ async fn add_provider(
                 Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string())
             });
             let model = body.model.clone().or_else(|| Some("qwen-plus".to_string()));
+            let key = key.trim();
             let provider =
-                garraia_agents::OpenAiProvider::new(key.clone(), model, base_url).with_name("qwen");
+                garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url).with_name("qwen");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("QWEN_API_KEY", key);
         }
@@ -841,8 +850,9 @@ async fn add_provider(
                 .clone()
                 .or_else(|| Some("https://api.lingyiwanwu.com/v1".to_string()));
             let model = body.model.clone().or_else(|| Some("yi-large".to_string()));
+            let key = key.trim();
             let provider =
-                garraia_agents::OpenAiProvider::new(key.clone(), model, base_url).with_name("yi");
+                garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url).with_name("yi");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("YI_API_KEY", key);
         }
@@ -864,7 +874,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("command-r-plus".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("cohere");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("COHERE_API_KEY", key);
@@ -887,7 +898,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("MiniMax-Text-01".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("minimax");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("MINIMAX_API_KEY", key);
@@ -910,7 +922,8 @@ async fn add_provider(
                 .model
                 .clone()
                 .or_else(|| Some("kimi-k2-0711-preview".to_string()));
-            let provider = garraia_agents::OpenAiProvider::new(key.clone(), model, base_url)
+            let key = key.trim();
+            let provider = garraia_agents::OpenAiProvider::new(key.to_string(), model, base_url)
                 .with_name("moonshot");
             state.agents.register_provider(Arc::new(provider));
             persist_api_key("MOONSHOT_API_KEY", key);

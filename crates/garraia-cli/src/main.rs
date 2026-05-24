@@ -611,7 +611,7 @@ fn kill_and_wait(pid: u32) -> bool {
 }
 
 fn main() -> Result<()> {
-    // Attempt to load .env file from the current directory, ignoring errors if missing
+    // Load .env file globally before checking config
     dotenvy::dotenv().ok();
 
     let mut args: Vec<_> = std::env::args_os().collect();

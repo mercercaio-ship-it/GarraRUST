@@ -59,6 +59,10 @@ impl OpenAiProvider {
         if name_str.to_lowercase().contains("openrouter") {
             self.is_openrouter = true;
         }
+        // Also check if name is openrouter (e.g. from bootstrap with default endpoint)
+        if !self.is_openrouter && self.base_url.contains("openrouter.ai") {
+            self.is_openrouter = true;
+        }
         self.name = Some(name_str);
         self
     }
@@ -324,24 +328,15 @@ impl LlmProvider for OpenAiProvider {
         let body = self.build_request(request);
 
         tracing::Span::current().record("model", body.model.as_str());
-        debug!("openai request: model={}", body.model);
+        debug!("openai request: model={}, key_len={}", body.model, self.api_key.len());
 
         let mut req = self
             .client
             .post(self.endpoint())
-            .header("authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .header("content-type", "application/json");
 
-        // Debug log the request details
-        tracing::debug!(
-            "openai request: endpoint={}, is_openrouter={}, model={}, provider_id={}",
-            self.endpoint(),
-            self.is_openrouter,
-            body.model,
-            self.provider_id()
-        );
-
-        // OpenRouter requires Referer header
+        // OpenRouter requires HTTP-Referer header
         if self.is_openrouter {
             req = req
                 .header("HTTP-Referer", "https://garraia.org")

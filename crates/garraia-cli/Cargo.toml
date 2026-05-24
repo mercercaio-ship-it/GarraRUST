@@ -38,7 +38,6 @@ uuid = { workspace = true }
 regex = { workspace = true }
 ring = { workspace = true }
 tracing-appender = "0.2.5"
-dotenvy.workspace = true
 
 # GAR-583: MCP server (`garra mcp-server`) exposing `garra_ask` as a stdio
 # tool. Reuses `rmcp` already in the workspace via `garraia-agents` (client

@@ -36,7 +36,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,7 +59,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run shellcheck on install.sh
         run: shellcheck install.sh
@@ -67,11 +67,17 @@ jobs:
       - name: Run shellcheck on installer fixtures
         run: shellcheck tests/install_sh/fixtures/garraia-stub.sh
 
+      - name: Run shellcheck on installer unit tests
+        run: shellcheck tests/install_sh/checksum_format.sh
+
       - name: Syntax-check the bash test runner
         run: bash -n tests/install_sh/bootstrap_phase.sh
 
       - name: Execute installer bootstrap_phase tests
         run: bash tests/install_sh/bootstrap_phase.sh
+
+      - name: Execute installer checksum-format tests
+        run: bash tests/install_sh/checksum_format.sh
 
   # Lint with clippy (strict — bloqueante desde plan 0049 / GAR-429)
   clippy:
@@ -87,7 +93,7 @@ jobs:
     # qualquer warning novo em crates ativos falha CI.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -119,7 +125,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run cargo-deny (advisories + bans + licenses + sources)
         uses: EmbarkStudios/cargo-deny-action@v2
@@ -141,7 +147,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v5
@@ -165,14 +171,14 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Gitleaks needs the full history to scan commits reachable from
           # the PR tip — shallow clones miss the diff baseline on push.
           fetch-depth: 0
 
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -188,7 +194,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -205,6 +211,31 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+
+      # utoipa-swagger-ui 9.0.2 build.rs uses reqwest to download the swagger-ui
+      # zip, which intermittently returns a corrupt file on cache miss ("InvalidArchive:
+      # Could not find EOCD"). Pre-download with curl + cache cross-platform. (GAR-822)
+      - name: Set SWAGGER_UI_DOWNLOAD_URL (cross-platform file:// URI)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/swagger-ui-cache"
+          URI=$(python3 -c "import pathlib,os; print(pathlib.Path(os.environ['RUNNER_TEMP'],'swagger-ui-cache','v5.17.14.zip').as_uri())")
+          echo "SWAGGER_UI_DOWNLOAD_URL=$URI" >> "$GITHUB_ENV"
+
+      - name: Cache Swagger UI zip
+        id: swagger-cache-test
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/swagger-ui-cache
+          key: swagger-ui-v5.17.14-${{ runner.os }}
+
+      - name: Download Swagger UI zip
+        if: steps.swagger-cache-test.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          curl -sSLf --retry 5 --retry-delay 5 \
+            -o "$RUNNER_TEMP/swagger-ui-cache/v5.17.14.zip" \
+            https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip
 
       - name: Build workspace
         # See clippy job comment: garraia-desktop excluded on CI.
@@ -275,7 +306,7 @@ jobs:
       pull-requests: write   # required for gh pr comment
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Plan abundant-thimble (GAR-439 slice 9.a, 2026-04-28): the default
       # GHA `ubuntu-latest` runner ships with ~14 GB free disk. The combo of
@@ -392,7 +423,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -422,12 +453,33 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust 1.93
         uses: dtolnay/rust-toolchain@1.93
 
+      # utoipa-swagger-ui 9.0.2 build.rs uses reqwest to download the swagger-ui
+      # zip, which intermittently returns a corrupt file ("InvalidArchive: Could not
+      # find EOCD"). Pre-download with curl (reliable, retries) and point the build
+      # script to the local file via SWAGGER_UI_DOWNLOAD_URL. (GAR-822)
+      - name: Cache Swagger UI zip
+        id: swagger-cache-msrv
+        uses: actions/cache@v5
+        with:
+          path: /tmp/swagger-ui-cache
+          key: swagger-ui-v5.17.14
+
+      - name: Download Swagger UI zip
+        if: steps.swagger-cache-msrv.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/swagger-ui-cache
+          curl -sSLf --retry 5 --retry-delay 5 \
+            -o /tmp/swagger-ui-cache/v5.17.14.zip \
+            https://github.com/swagger-api/swagger-ui/archive/refs/tags/v5.17.14.zip
+
       - name: cargo +1.93 check
+        env:
+          SWAGGER_UI_DOWNLOAD_URL: file:///tmp/swagger-ui-cache/v5.17.14.zip
         run: cargo +1.93 check --workspace --exclude garraia-desktop --locked
 
   # E2E integration test (GAR-216, GAR-438 / plan 0050 Lote 2)
@@ -476,7 +528,7 @@ jobs:
       GARRAIA_SIGNUP_DATABASE_URL: "postgres://postgres:postgres@localhost:5432/garraia_workspace_test"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Fake CI-only secrets are still printed in logs by default. Mask them
       # so the pattern doesn't become a precedent for real secrets later.
@@ -609,7 +661,7 @@ jobs:
         working-directory: tests
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # See `e2e` job for rationale — mask CI-only fake secrets.
       - name: Mask CI-only fake secrets
@@ -637,7 +689,7 @@ jobs:
         run: cargo build --bin garra --release
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
@@ -722,7 +774,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable

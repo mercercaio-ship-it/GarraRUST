@@ -31,6 +31,10 @@
 
 pub mod audit;
 pub mod chats;
+pub mod doc_blocks;
+pub mod doc_mentions;
+pub mod doc_versions;
+pub mod docs;
 pub mod files;
 pub mod groups;
 pub mod invites;
@@ -48,8 +52,9 @@ use std::sync::atomic::AtomicUsize;
 
 use axum::Router;
 use axum::extract::FromRef;
-use axum::routing::{delete, get, head, post};
+use axum::routing::{delete, get, head, patch, post};
 use dashmap::DashMap;
+use garraia_agents::AgentRuntime;
 use garraia_auth::{AppPool, JwtIssuer, LoginPool};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -130,6 +135,8 @@ pub struct RestV1FullState {
     pub chat_events: Arc<DashMap<Uuid, tokio::sync::broadcast::Sender<serde_json::Value>>>,
     /// Plan 0163 (GAR-679): per-user concurrent SSE connection counter shared with AppState.
     pub sse_connections: Arc<DashMap<Uuid, Arc<AtomicUsize>>>,
+    /// Plan 0240 (GAR-759): AgentRuntime shared with AppState for bot replies.
+    pub agents: Arc<AgentRuntime>,
 }
 
 impl RestV1FullState {
@@ -143,6 +150,7 @@ impl RestV1FullState {
             storage: RestV1StorageState::from_app_state(app),
             chat_events: app.chat_events.clone(),
             sse_connections: app.sse_connections.clone(),
+            agents: app.agents.clone(),
         })
     }
 
@@ -263,7 +271,7 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{id}/members/{user_id}",
-                    delete(groups::delete_member),
+                    get(groups::get_member).delete(groups::delete_member),
                 )
                 .route("/v1/invites/{token}/accept", post(invites::accept_invite))
                 .layer(axum::middleware::from_fn_with_state(
@@ -311,7 +319,73 @@ pub fn router(app_state: Arc<AppState>) -> Router {
 
             Router::new()
                 // Plan 0110 (GAR-599) — PATCH /v1/me self-service profile update.
-                .route("/v1/me", get(me::get_me).patch(me::patch_me))
+                // Plan 0237 (GAR-755) — GET /v1/me/mentions @mention inbox.
+                // Plan 0242 (GAR-763) — GET /v1/me/tasks assigned-task inbox.
+                // Plan 0245 (GAR-765) — GET /v1/me/chats chat membership inbox.
+                // Plan 0246 (GAR-767) — GET /v1/me/files uploaded-files inbox.
+                // Plan 0249 (GAR-770) — GET /v1/me/memory personal memory inbox.
+                // Plan 0255 (GAR-777) — GET /v1/me/invites pending-invites inbox.
+                // Plan 0260 (GAR-788) — GET /v1/me/reactions emoji-reactions inbox.
+                // Plan 0261 (GAR-790) — GET /v1/me/threads thread-participation inbox.
+                // Plan 0318 (GAR-858) — GET /v1/me/doc-page-mentions doc-page @mention inbox.
+                // Plan 0322 (GAR-860) — GET /v1/me/doc-pages authored doc-pages inbox.
+                // Plan 0326 (GAR-866) — GET /v1/me/sessions + DELETE /v1/me/sessions/{id}.
+                // Plan 0328 (GAR-869) — DELETE /v1/me/sessions (revoke all sessions).
+                // Plan 0331 (GAR-871) — POST/GET /v1/me/api-keys + GET/DELETE /v1/me/api-keys/{id}.
+                // Plan 0335 (GAR-876) — PATCH /v1/me/password (change own password).
+                // Plan 0342 (GAR-884) — DELETE /v1/me (self-service account soft-deletion).
+                .route(
+                    "/v1/me",
+                    get(me::get_me).patch(me::patch_me).delete(me::delete_me),
+                )
+                .route("/v1/me/mentions", get(me::list_my_mentions))
+                .route("/v1/me/tasks", get(me::list_my_tasks))
+                .route("/v1/me/chats", get(me::list_my_chats))
+                .route("/v1/me/files", get(me::list_my_files))
+                .route("/v1/me/memory", get(me::list_my_memory))
+                .route("/v1/me/invites", get(me::list_my_invites))
+                // Plan 0258 (GAR-783) — POST /v1/me/invites/{id}/decline (invitee decline).
+                .route(
+                    "/v1/me/invites/{invite_id}/decline",
+                    post(me::decline_invite),
+                )
+                // Plan 0263 (GAR-794) — POST /v1/me/invites/{id}/accept (invitee accept).
+                .route(
+                    "/v1/me/invites/{invite_id}/accept",
+                    post(me::accept_my_invite),
+                )
+                .route("/v1/me/reactions", get(me::list_my_reactions))
+                .route("/v1/me/threads", get(me::list_my_threads))
+                .route(
+                    "/v1/me/doc-page-mentions",
+                    get(me::list_my_doc_page_mentions),
+                )
+                .route("/v1/me/doc-pages", get(me::list_my_doc_pages))
+                .route(
+                    "/v1/me/sessions",
+                    get(me::list_my_sessions).delete(me::revoke_all_my_sessions),
+                )
+                .route(
+                    "/v1/me/sessions/{session_id}",
+                    delete(me::revoke_my_session),
+                )
+                .route(
+                    "/v1/me/api-keys",
+                    post(me::create_my_api_key).get(me::list_my_api_keys),
+                )
+                .route(
+                    "/v1/me/api-keys/{key_id}",
+                    get(me::get_my_api_key)
+                        .patch(me::patch_my_api_key)
+                        .delete(me::revoke_my_api_key),
+                )
+                .route("/v1/me/password", patch(me::patch_my_password))
+                // Plan 0340 (GAR-881) — GET /v1/me/audit personal audit trail.
+                .route("/v1/me/audit", get(me::list_my_audit))
+                // Plan 0344 (GAR-885) — GET /v1/me/export LGPD/GDPR data portability.
+                .route("/v1/me/export", get(me::export_me))
+                // Plan 0345 (GAR-888) — POST /v1/me/anonymize LGPD art. 12.
+                .route("/v1/me/anonymize", post(me::anonymize_me))
                 // Plan 0105 (GAR-580) — groups slice 3: list user's groups.
                 .route(
                     "/v1/groups",
@@ -319,11 +393,18 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{id}",
-                    get(groups::get_group).patch(groups::patch_group),
+                    get(groups::get_group)
+                        .patch(groups::patch_group)
+                        .delete(groups::delete_group),
                 )
                 .route(
                     "/v1/groups/{id}/invites",
                     post(groups::create_invite).get(groups::list_invites),
+                )
+                // Plan 0257 (GAR-780) — invite revocation: get + delete single invite.
+                .route(
+                    "/v1/groups/{id}/invites/{invite_id}",
+                    get(groups::get_invite).delete(groups::revoke_invite),
                 )
                 // Plan 0097 (GAR-574) — groups slice 2: list members + invites.
                 .route("/v1/groups/{id}/members", get(groups::list_members))
@@ -343,9 +424,12 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/chats/{chat_id}/members",
                     get(chats::list_chat_members).post(chats::add_chat_member),
                 )
+                // Plan 0325 (GAR-864) — get single chat member.
                 .route(
                     "/v1/chats/{chat_id}/members/{user_id}",
-                    delete(chats::remove_chat_member),
+                    get(chats::get_chat_member)
+                        .delete(chats::remove_chat_member)
+                        .patch(chats::patch_chat_member),
                 )
                 // Plan 0055 (GAR-507) — messages slice 2.
                 .route(
@@ -354,6 +438,20 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 // Plan 0162 (GAR-670) — SSE stream slice.
                 .route("/v1/chats/{chat_id}/stream", get(chats::stream_chat))
+                // Plan 0221 (GAR-740) — chats slice 6: list threads in a chat.
+                .route("/v1/chats/{chat_id}/threads", get(chats::list_chat_threads))
+                // Plan 0227 (GAR-745) — chats slice 7: patch thread (resolve/title).
+                // Plan 0265 (GAR-798) — get single thread.
+                .route(
+                    "/v1/threads/{thread_id}",
+                    get(chats::get_thread).patch(chats::patch_thread),
+                )
+                // Plan 0274 (GAR-811) — thread reply.
+                // Plan 0279 (GAR-814) — list replies by thread_id.
+                .route(
+                    "/v1/threads/{thread_id}/messages",
+                    post(messages::send_thread_reply).get(messages::get_thread_messages_by_id),
+                )
                 // Plan 0057 (GAR-509) — threads slice 3.
                 // Plan 0109 (GAR-595) — messages slice 6: GET thread messages.
                 .route(
@@ -377,6 +475,17 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/messages/{message_id}/attachments/{file_id}",
                     delete(messages::delete_message_attachment),
                 )
+                // Plan 0229 (GAR-747) — message reactions slice 8.
+                .route(
+                    "/v1/messages/{message_id}/reactions",
+                    post(chats::add_message_reaction).get(chats::list_message_reactions),
+                )
+                .route(
+                    "/v1/messages/{message_id}/reactions/{emoji}",
+                    delete(chats::remove_message_reaction),
+                )
+                // Plan 0233 (GAR-752) — typing indicator slice 9.
+                .route("/v1/chats/{chat_id}/typing", post(chats::typing_indicator))
                 // Plan 0062 (GAR-514) — memory API slice 1.
                 .route(
                     "/v1/memory",
@@ -420,7 +529,9 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}",
-                    delete(tasks::delete_task_comment),
+                    get(tasks::get_task_comment)
+                        .delete(tasks::delete_task_comment)
+                        .patch(tasks::patch_task_comment),
                 )
                 // Plan 0077 (GAR-533) — task assignees API slice 4.
                 .route(
@@ -432,28 +543,35 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     delete(tasks::remove_task_assignee),
                 )
                 // Plan 0078 (GAR-536) — task labels API slice 5.
+                // Plan 0266 (GAR-800) — task label PATCH (edit name/color).
+                // Plan 0267 (GAR-802) — task label GET single item.
+                // Plan 0271 (GAR-808) — task label assignment GET list.
                 .route(
                     "/v1/groups/{group_id}/task-labels",
                     post(tasks::create_task_label).get(tasks::list_task_labels),
                 )
                 .route(
                     "/v1/groups/{group_id}/task-labels/{label_id}",
-                    delete(tasks::delete_task_label),
+                    get(tasks::get_task_label)
+                        .delete(tasks::delete_task_label)
+                        .patch(tasks::patch_task_label),
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/labels",
-                    post(tasks::assign_task_label),
+                    post(tasks::assign_task_label).get(tasks::list_task_label_assignments),
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}",
                     delete(tasks::remove_task_label_from_task),
                 )
                 // Plan 0079 (GAR-539) — task subscriptions API slice 6.
+                // Plan 0288 (GAR-827) — PATCH muted flag.
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/subscriptions",
                     post(tasks::subscribe_to_task)
                         .get(tasks::list_task_subscriptions)
-                        .delete(tasks::unsubscribe_from_task),
+                        .delete(tasks::unsubscribe_from_task)
+                        .patch(tasks::patch_task_subscription),
                 )
                 // Plan 0080 (GAR-541) — task activity API slice 7.
                 .route(
@@ -509,9 +627,14 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     get(files::get_file).patch(files::patch_file),
                 )
                 // Plan 0095 (GAR-569) — files API slice 8: list versions.
+                // Plan 0283 (GAR-820) — GET single file version by version number.
                 .route(
                     "/v1/groups/{group_id}/files/{file_id}/versions",
                     get(files::list_file_versions),
+                )
+                .route(
+                    "/v1/groups/{group_id}/files/{file_id}/versions/{version}",
+                    get(files::get_file_version),
                 )
                 // Plan 0090 (GAR-559) — files API slice 3: GET single folder.
                 // Plan 0091 (GAR-561) — files API slice 4: PATCH folder rename.
@@ -521,6 +644,59 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     get(files::get_folder)
                         .patch(files::patch_folder)
                         .delete(files::delete_folder),
+                )
+                // Plan 0297 (GAR-834) — Docs Tier 2 scaffold: doc pages.
+                // Plan 0299 (GAR-837) — single-page CRUD: GET/PATCH/DELETE.
+                .route(
+                    "/v1/groups/{group_id}/doc-pages",
+                    post(docs::create_doc_page).get(docs::list_doc_pages),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}",
+                    get(docs::get_doc_page)
+                        .patch(docs::patch_doc_page)
+                        .delete(docs::delete_doc_page),
+                )
+                // Plan 0302 (GAR-840) — Docs Tier 2: doc blocks CRUD.
+                .route(
+                    "/v1/doc-pages/{page_id}/blocks",
+                    post(doc_blocks::create_doc_block).get(doc_blocks::list_doc_blocks),
+                )
+                .route(
+                    "/v1/doc-blocks/{block_id}",
+                    get(doc_blocks::get_doc_block)
+                        .patch(doc_blocks::update_doc_block)
+                        .delete(doc_blocks::delete_doc_block),
+                )
+                // Plan 0307 (GAR-845) — Docs Tier 2: page version snapshots.
+                .route(
+                    "/v1/doc-pages/{page_id}/versions",
+                    post(doc_versions::create_doc_page_version)
+                        .get(doc_versions::list_doc_page_versions),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}",
+                    get(doc_versions::get_doc_page_version),
+                )
+                // Plan 0312 (GAR-850) — Docs Tier 2: restore page to a prior version.
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}/restore",
+                    post(doc_versions::restore_doc_page_version),
+                )
+                // Plan 0309 (GAR-847) — Docs Tier 2: duplicate a doc page.
+                .route(
+                    "/v1/doc-pages/{page_id}/duplicate",
+                    post(docs::duplicate_doc_page),
+                )
+                // Plan 0318 (GAR-858) — Docs Tier 2: doc page mentions.
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions",
+                    post(doc_mentions::add_doc_page_mention)
+                        .get(doc_mentions::list_doc_page_mentions),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions/{user_id}",
+                    delete(doc_mentions::delete_doc_page_mention),
                 )
                 .merge(rate_limited_routes)
                 .merge(tus_routes)
@@ -535,7 +711,69 @@ pub fn router(app_state: Arc<AppState>) -> Router {
             // whether `GARRAIA_APP_DATABASE_URL` is set.
             Router::new()
                 // Plan 0110 (GAR-599) — PATCH /v1/me stub (no AppPool in mode 2).
-                .route("/v1/me", get(me::get_me).patch(unconfigured_handler))
+                // Plan 0237 (GAR-755) — GET /v1/me/mentions stub.
+                // Plan 0242 (GAR-763) — GET /v1/me/tasks stub.
+                // Plan 0245 (GAR-765) — GET /v1/me/chats stub.
+                // Plan 0246 (GAR-767) — GET /v1/me/files stub.
+                // Plan 0249 (GAR-770) — GET /v1/me/memory stub.
+                // Plan 0255 (GAR-777) — GET /v1/me/invites stub.
+                // Plan 0258 (GAR-783) — POST /v1/me/invites/{id}/decline stub.
+                // Plan 0263 (GAR-794) — POST /v1/me/invites/{id}/accept stub.
+                // Plan 0260 (GAR-788) — GET /v1/me/reactions stub.
+                // Plan 0261 (GAR-790) — GET /v1/me/threads stub.
+                // Plan 0318 (GAR-858) — GET /v1/me/doc-page-mentions stub (mode 2).
+                // Plan 0322 (GAR-860) — GET /v1/me/doc-pages stub (mode 2).
+                // Plan 0326 (GAR-866) — GET /v1/me/sessions + DELETE /v1/me/sessions/{id} stub.
+                // Plan 0328 (GAR-869) — DELETE /v1/me/sessions (revoke all sessions) stub.
+                // Plan 0331 (GAR-871) — POST/GET /v1/me/api-keys + GET/DELETE /v1/me/api-keys/{id} stub.
+                // Plan 0335 (GAR-876) — PATCH /v1/me/password stub.
+                // Plan 0342 (GAR-884) — DELETE /v1/me (self-service account soft-deletion) stub.
+                .route(
+                    "/v1/me",
+                    get(me::get_me)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                .route("/v1/me/mentions", get(unconfigured_handler))
+                .route("/v1/me/tasks", get(unconfigured_handler))
+                .route("/v1/me/chats", get(unconfigured_handler))
+                .route("/v1/me/files", get(unconfigured_handler))
+                .route("/v1/me/memory", get(unconfigured_handler))
+                .route("/v1/me/invites", get(unconfigured_handler))
+                .route(
+                    "/v1/me/invites/{invite_id}/decline",
+                    post(unconfigured_handler),
+                )
+                .route(
+                    "/v1/me/invites/{invite_id}/accept",
+                    post(unconfigured_handler),
+                )
+                .route("/v1/me/reactions", get(unconfigured_handler))
+                .route("/v1/me/threads", get(unconfigured_handler))
+                .route("/v1/me/doc-page-mentions", get(unconfigured_handler))
+                .route("/v1/me/doc-pages", get(unconfigured_handler))
+                .route(
+                    "/v1/me/sessions",
+                    get(unconfigured_handler).delete(unconfigured_handler),
+                )
+                .route("/v1/me/sessions/{session_id}", delete(unconfigured_handler))
+                .route(
+                    "/v1/me/api-keys",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/me/api-keys/{key_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                .route("/v1/me/password", patch(unconfigured_handler))
+                // Plan 0340 (GAR-881) — GET /v1/me/audit stub.
+                .route("/v1/me/audit", get(unconfigured_handler))
+                // Plan 0344 (GAR-885) — GET /v1/me/export stub.
+                .route("/v1/me/export", get(unconfigured_handler))
+                // Plan 0345 (GAR-888) — POST /v1/me/anonymize stub.
+                .route("/v1/me/anonymize", post(unconfigured_handler))
                 .route("/v1/groups", post(unconfigured_handler))
                 .route(
                     "/v1/groups/{id}",
@@ -545,6 +783,11 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/groups/{id}/invites",
                     post(unconfigured_handler).get(unconfigured_handler),
                 )
+                // Plan 0257 (GAR-780) — invite revocation, fail-soft 503.
+                .route(
+                    "/v1/groups/{id}/invites/{invite_id}",
+                    get(unconfigured_handler).delete(unconfigured_handler),
+                )
                 // Plan 0097 (GAR-574) — groups slice 2, fail-soft 503.
                 .route("/v1/groups/{id}/members", get(unconfigured_handler))
                 .route(
@@ -553,7 +796,7 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{id}/members/{user_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler).delete(unconfigured_handler),
                 )
                 .route("/v1/invites/{token}/accept", post(unconfigured_handler))
                 // Plan 0054 (GAR-506) — chats slice 1, fail-soft 503.
@@ -574,7 +817,9 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/chats/{chat_id}/members/{user_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 // Plan 0055 (GAR-507) — messages slice 2, fail-soft 503.
                 .route(
@@ -583,6 +828,20 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 // Plan 0162 (GAR-670) — SSE stream, fail-soft 503.
                 .route("/v1/chats/{chat_id}/stream", get(unconfigured_handler))
+                // Plan 0221 (GAR-740) — chats slice 6: list threads, fail-soft 503.
+                .route("/v1/chats/{chat_id}/threads", get(unconfigured_handler))
+                // Plan 0227 (GAR-745) — chats slice 7: patch thread, fail-soft 503.
+                // Plan 0265 (GAR-798) — get single thread, fail-soft 503.
+                .route(
+                    "/v1/threads/{thread_id}",
+                    get(unconfigured_handler).patch(unconfigured_handler),
+                )
+                // Plan 0274 (GAR-811) — thread reply, fail-soft 503.
+                // Plan 0279 (GAR-814) — list replies by thread_id, fail-soft 503.
+                .route(
+                    "/v1/threads/{thread_id}/messages",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
                 // Plan 0057 (GAR-509) — threads slice 3, fail-soft 503.
                 // Plan 0109 (GAR-595) — messages slice 6, fail-soft 503.
                 .route(
@@ -606,6 +865,17 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/messages/{message_id}/attachments/{file_id}",
                     delete(unconfigured_handler),
                 )
+                // Plan 0229 (GAR-747) — message reactions, fail-soft 503.
+                .route(
+                    "/v1/messages/{message_id}/reactions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/messages/{message_id}/reactions/{emoji}",
+                    delete(unconfigured_handler),
+                )
+                // Plan 0233 (GAR-752) — typing indicator, fail-soft 503.
+                .route("/v1/chats/{chat_id}/typing", post(unconfigured_handler))
                 // Plan 0062 (GAR-514) — memory API slice 1, fail-soft 503.
                 .route(
                     "/v1/memory",
@@ -669,8 +939,13 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     get(unconfigured_handler).patch(unconfigured_handler),
                 )
                 // Plan 0095 (GAR-569) — files API slice 8: list versions, fail-soft 503.
+                // Plan 0283 (GAR-820) — GET single file version, fail-soft 503.
                 .route(
                     "/v1/groups/{group_id}/files/{file_id}/versions",
+                    get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/files/{file_id}/versions/{version}",
                     get(unconfigured_handler),
                 )
                 .route(
@@ -685,7 +960,9 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/assignees",
@@ -694,6 +971,14 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/assignees/{user_id}",
                     delete(unconfigured_handler),
+                )
+                // Plan 0079 (GAR-539) / Plan 0288 (GAR-827) — task subscriptions, fail-soft 503.
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/subscriptions",
+                    post(unconfigured_handler)
+                        .get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 // Plan 0080 (GAR-541) — task activity API slice 7, fail-soft 503.
                 .route(
@@ -719,6 +1004,28 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/groups/{group_id}/tasks/{task_id}/attachments/{file_id}",
                     delete(unconfigured_handler),
                 )
+                // Plan 0078 (GAR-536) — task labels API slice 5, fail-soft 503.
+                // Plan 0266 (GAR-800) — task label PATCH, fail-soft 503.
+                // Plan 0267 (GAR-802) — task label GET single item, fail-soft 503.
+                // Plan 0271 (GAR-808) — task label assignment GET list, fail-soft 503.
+                .route(
+                    "/v1/groups/{group_id}/task-labels",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/task-labels/{label_id}",
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/labels",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}",
+                    delete(unconfigured_handler),
+                )
                 .route(
                     "/v1/uploads",
                     post(unconfigured_handler).options(uploads::options_uploads),
@@ -729,6 +1036,57 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                         .patch(unconfigured_handler)
                         .delete(unconfigured_handler),
                 )
+                // Plan 0297 (GAR-834) — Docs Tier 2 scaffold: doc pages stub.
+                // Plan 0299 (GAR-837) — single-page CRUD stub.
+                .route(
+                    "/v1/groups/{group_id}/doc-pages",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                // Plan 0302 (GAR-840) — doc blocks stub (mode 2).
+                .route(
+                    "/v1/doc-pages/{page_id}/blocks",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-blocks/{block_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                // Plan 0307 (GAR-845) — doc versions stub (mode 2).
+                .route(
+                    "/v1/doc-pages/{page_id}/versions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}",
+                    get(unconfigured_handler),
+                )
+                // Plan 0312 (GAR-850) — restore stub (mode 2).
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}/restore",
+                    post(unconfigured_handler),
+                )
+                // Plan 0309 (GAR-847) — duplicate stub (mode 2).
+                .route(
+                    "/v1/doc-pages/{page_id}/duplicate",
+                    post(unconfigured_handler),
+                )
+                // Plan 0318 (GAR-858) — doc page mentions stub (mode 2).
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions/{user_id}",
+                    delete(unconfigured_handler),
+                )
                 .with_state(auth)
                 .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", ApiDoc::openapi()))
         }
@@ -738,10 +1096,66 @@ pub fn router(app_state: Arc<AppState>) -> Router {
             // by spec — always return the discovery headers.
             Router::new()
                 // Plan 0110 (GAR-599) — PATCH /v1/me stub (no-auth mode).
+                // Plan 0237 (GAR-755) — GET /v1/me/mentions stub.
+                // Plan 0242 (GAR-763) — GET /v1/me/tasks stub.
+                // Plan 0245 (GAR-765) — GET /v1/me/chats stub.
+                // Plan 0246 (GAR-767) — GET /v1/me/files stub.
+                // Plan 0249 (GAR-770) — GET /v1/me/memory stub.
+                // Plan 0255 (GAR-777) — GET /v1/me/invites stub.
+                // Plan 0258 (GAR-783) — POST /v1/me/invites/{id}/decline stub.
+                // Plan 0263 (GAR-794) — POST /v1/me/invites/{id}/accept stub.
+                // Plan 0260 (GAR-788) — GET /v1/me/reactions stub.
+                // Plan 0318 (GAR-858) — GET /v1/me/doc-page-mentions stub (mode 3).
+                // Plan 0326 (GAR-866) — GET /v1/me/sessions + DELETE /v1/me/sessions/{id} stub.
+                // Plan 0331 (GAR-871) — POST/GET /v1/me/api-keys + GET/DELETE /v1/me/api-keys/{id} stub.
+                // Plan 0335 (GAR-876) — PATCH /v1/me/password stub.
+                // Plan 0342 (GAR-884) — DELETE /v1/me (self-service account soft-deletion) stub.
                 .route(
                     "/v1/me",
-                    get(unconfigured_handler).patch(unconfigured_handler),
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
                 )
+                .route("/v1/me/mentions", get(unconfigured_handler))
+                .route("/v1/me/tasks", get(unconfigured_handler))
+                .route("/v1/me/chats", get(unconfigured_handler))
+                .route("/v1/me/files", get(unconfigured_handler))
+                .route("/v1/me/memory", get(unconfigured_handler))
+                .route("/v1/me/invites", get(unconfigured_handler))
+                .route(
+                    "/v1/me/invites/{invite_id}/decline",
+                    post(unconfigured_handler),
+                )
+                .route(
+                    "/v1/me/invites/{invite_id}/accept",
+                    post(unconfigured_handler),
+                )
+                .route("/v1/me/reactions", get(unconfigured_handler))
+                .route("/v1/me/doc-page-mentions", get(unconfigured_handler))
+                .route("/v1/me/doc-pages", get(unconfigured_handler))
+                // Plan 0328 (GAR-869) — DELETE /v1/me/sessions (revoke all sessions) stub.
+                .route(
+                    "/v1/me/sessions",
+                    get(unconfigured_handler).delete(unconfigured_handler),
+                )
+                .route("/v1/me/sessions/{session_id}", delete(unconfigured_handler))
+                .route(
+                    "/v1/me/api-keys",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/me/api-keys/{key_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                .route("/v1/me/password", patch(unconfigured_handler))
+                // Plan 0340 (GAR-881) — GET /v1/me/audit stub.
+                .route("/v1/me/audit", get(unconfigured_handler))
+                // Plan 0344 (GAR-885) — GET /v1/me/export stub.
+                .route("/v1/me/export", get(unconfigured_handler))
+                // Plan 0345 (GAR-888) — POST /v1/me/anonymize stub.
+                .route("/v1/me/anonymize", post(unconfigured_handler))
                 .route("/v1/groups", post(unconfigured_handler))
                 .route(
                     "/v1/groups/{id}",
@@ -751,6 +1165,11 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/groups/{id}/invites",
                     post(unconfigured_handler).get(unconfigured_handler),
                 )
+                // Plan 0257 (GAR-780) — invite revocation, no-auth stub.
+                .route(
+                    "/v1/groups/{id}/invites/{invite_id}",
+                    get(unconfigured_handler).delete(unconfigured_handler),
+                )
                 // Plan 0097 (GAR-574) — groups slice 2, no-auth stub.
                 .route("/v1/groups/{id}/members", get(unconfigured_handler))
                 .route(
@@ -759,7 +1178,7 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{id}/members/{user_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler).delete(unconfigured_handler),
                 )
                 .route("/v1/invites/{token}/accept", post(unconfigured_handler))
                 // Plan 0054 (GAR-506) — chats slice 1, no-auth stub.
@@ -780,7 +1199,9 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/chats/{chat_id}/members/{user_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 // Plan 0055 (GAR-507) — messages slice 2, no-auth stub.
                 .route(
@@ -789,6 +1210,20 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 // Plan 0162 (GAR-670) — SSE stream, no-auth stub.
                 .route("/v1/chats/{chat_id}/stream", get(unconfigured_handler))
+                // Plan 0221 (GAR-740) — chats slice 6: list threads, no-auth stub.
+                .route("/v1/chats/{chat_id}/threads", get(unconfigured_handler))
+                // Plan 0227 (GAR-745) — chats slice 7: patch thread, no-auth stub.
+                // Plan 0265 (GAR-798) — get single thread, no-auth stub.
+                .route(
+                    "/v1/threads/{thread_id}",
+                    get(unconfigured_handler).patch(unconfigured_handler),
+                )
+                // Plan 0274 (GAR-811) — thread reply, no-auth stub.
+                // Plan 0279 (GAR-814) — list replies by thread_id, no-auth stub.
+                .route(
+                    "/v1/threads/{thread_id}/messages",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
                 // Plan 0057 (GAR-509) — threads slice 3, no-auth stub.
                 // Plan 0109 (GAR-595) — messages slice 6, no-auth stub.
                 .route(
@@ -812,6 +1247,17 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/messages/{message_id}/attachments/{file_id}",
                     delete(unconfigured_handler),
                 )
+                // Plan 0229 (GAR-747) — message reactions, no-auth stub.
+                .route(
+                    "/v1/messages/{message_id}/reactions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/messages/{message_id}/reactions/{emoji}",
+                    delete(unconfigured_handler),
+                )
+                // Plan 0233 (GAR-752) — typing indicator, no-auth stub.
+                .route("/v1/chats/{chat_id}/typing", post(unconfigured_handler))
                 // Plan 0062 (GAR-514) — memory API slice 1, no-auth stub.
                 .route(
                     "/v1/memory",
@@ -871,8 +1317,13 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     get(unconfigured_handler).patch(unconfigured_handler),
                 )
                 // Plan 0095 (GAR-569) — files API slice 8: list versions, no-auth stub.
+                // Plan 0283 (GAR-820) — GET single file version, no-auth stub.
                 .route(
                     "/v1/groups/{group_id}/files/{file_id}/versions",
+                    get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/files/{file_id}/versions/{version}",
                     get(unconfigured_handler),
                 )
                 .route(
@@ -887,7 +1338,9 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}",
-                    delete(unconfigured_handler),
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/assignees",
@@ -896,6 +1349,14 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                 .route(
                     "/v1/groups/{group_id}/tasks/{task_id}/assignees/{user_id}",
                     delete(unconfigured_handler),
+                )
+                // Plan 0079 (GAR-539) / Plan 0288 (GAR-827) — task subscriptions, no-auth stub.
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/subscriptions",
+                    post(unconfigured_handler)
+                        .get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
                 )
                 // Plan 0080 (GAR-541) — task activity API slice 7, no-auth stub.
                 .route(
@@ -921,6 +1382,28 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     "/v1/groups/{group_id}/tasks/{task_id}/attachments/{file_id}",
                     delete(unconfigured_handler),
                 )
+                // Plan 0078 (GAR-536) — task labels API slice 5, no-auth stub.
+                // Plan 0266 (GAR-800) — task label PATCH, no-auth stub.
+                // Plan 0267 (GAR-802) — task label GET single item, no-auth stub.
+                // Plan 0271 (GAR-808) — task label assignment GET list, no-auth stub.
+                .route(
+                    "/v1/groups/{group_id}/task-labels",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/task-labels/{label_id}",
+                    get(unconfigured_handler)
+                        .delete(unconfigured_handler)
+                        .patch(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/labels",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}",
+                    delete(unconfigured_handler),
+                )
                 .route(
                     "/v1/uploads",
                     post(unconfigured_handler).options(uploads::options_uploads),
@@ -930,6 +1413,57 @@ pub fn router(app_state: Arc<AppState>) -> Router {
                     head(unconfigured_handler)
                         .patch(unconfigured_handler)
                         .delete(unconfigured_handler),
+                )
+                // Plan 0297 (GAR-834) — Docs Tier 2 scaffold: doc pages stub.
+                // Plan 0299 (GAR-837) — single-page CRUD stub.
+                .route(
+                    "/v1/groups/{group_id}/doc-pages",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                // Plan 0302 (GAR-840) — doc blocks stub (mode 3).
+                .route(
+                    "/v1/doc-pages/{page_id}/blocks",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-blocks/{block_id}",
+                    get(unconfigured_handler)
+                        .patch(unconfigured_handler)
+                        .delete(unconfigured_handler),
+                )
+                // Plan 0307 (GAR-845) — doc versions stub (mode 3).
+                .route(
+                    "/v1/doc-pages/{page_id}/versions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}",
+                    get(unconfigured_handler),
+                )
+                // Plan 0312 (GAR-850) — restore stub (mode 3).
+                .route(
+                    "/v1/doc-pages/{page_id}/versions/{version_id}/restore",
+                    post(unconfigured_handler),
+                )
+                // Plan 0309 (GAR-847) — duplicate stub (mode 3).
+                .route(
+                    "/v1/doc-pages/{page_id}/duplicate",
+                    post(unconfigured_handler),
+                )
+                // Plan 0318 (GAR-858) — doc page mentions stub (mode 3).
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions",
+                    post(unconfigured_handler).get(unconfigured_handler),
+                )
+                .route(
+                    "/v1/doc-pages/{page_id}/mentions/{user_id}",
+                    delete(unconfigured_handler),
                 )
                 .route("/v1/openapi.json", get(unconfigured_handler))
                 .route("/docs", get(unconfigured_handler))

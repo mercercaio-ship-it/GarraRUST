@@ -1,7 +1,7 @@
 //! `/v1/groups/{group_id}/task-lists` and task/comment/assignee/label/subscription/attachment handlers
-//! (plan 0066/0067/0069/0077/0078/0079/0083/0096, GAR-516/GAR-518/GAR-520/GAR-533/GAR-536/GAR-539/GAR-546/GAR-572).
+//! (plan 0066/0067/0069/0077/0078/0079/0083/0096/0267, GAR-516/GAR-518/GAR-520/GAR-533/GAR-536/GAR-539/GAR-546/GAR-572/GAR-802).
 //!
-//! Twenty-seven endpoints on the `garraia_app` RLS-enforced pool:
+//! Twenty-eight endpoints on the `garraia_app` RLS-enforced pool:
 //!
 //! **Slice 1 (plan 0066 / GAR-516):**
 //! - `POST /v1/groups/{group_id}/task-lists` — create task list
@@ -19,6 +19,7 @@
 //! **Slice 3 (plan 0069 / GAR-520):**
 //! - `POST /v1/groups/{group_id}/tasks/{task_id}/comments` — create comment
 //! - `GET /v1/groups/{group_id}/tasks/{task_id}/comments` — cursor-paginated comment list
+//! - `GET /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}` — fetch single comment
 //! - `DELETE /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}` — soft-delete comment
 //!
 //! **Slice 4 (plan 0077 / GAR-533):**
@@ -32,6 +33,9 @@
 //! - `DELETE /v1/groups/{group_id}/task-labels/{label_id}` — delete label (CASCADE assignments)
 //! - `POST /v1/groups/{group_id}/tasks/{task_id}/labels` — assign label to task
 //! - `DELETE /v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}` — remove label assignment (idempotent)
+//!
+//! **Slice 5b (plan 0267 / GAR-802):**
+//! - `GET /v1/groups/{group_id}/task-labels/{label_id}` — fetch single task label
 //!
 //! **Slice 6 (plan 0079 / GAR-539):**
 //! - `POST /v1/groups/{group_id}/tasks/{task_id}/subscriptions` — current user subscribes
@@ -90,9 +94,11 @@ pub use task_lists::{
 
 pub mod comments;
 pub use comments::{
-    __path_create_task_comment, __path_delete_task_comment, __path_list_task_comments,
-    CommentResponse, CreateCommentRequest, ListCommentsQuery, ListCommentsResponse,
-    create_task_comment, delete_task_comment, list_task_comments,
+    __path_create_task_comment, __path_delete_task_comment, __path_get_task_comment,
+    __path_list_task_comments, __path_patch_task_comment, CommentResponse, CreateCommentRequest,
+    EditCommentRequest, EditedCommentResponse, ListCommentsQuery, ListCommentsResponse,
+    create_task_comment, delete_task_comment, get_task_comment, list_task_comments,
+    patch_task_comment,
 };
 
 pub mod assignees;
@@ -105,15 +111,18 @@ pub use assignees::{
 pub mod labels;
 pub use labels::{
     __path_assign_task_label, __path_create_task_label, __path_delete_task_label,
-    __path_list_task_labels, __path_remove_task_label_from_task, AssignTaskLabelRequest,
-    CreateTaskLabelRequest, LabelAssignmentResponse, TaskLabelResponse, assign_task_label,
-    create_task_label, delete_task_label, list_task_labels, remove_task_label_from_task,
+    __path_get_task_label, __path_list_task_label_assignments, __path_list_task_labels,
+    __path_patch_task_label, __path_remove_task_label_from_task, AssignTaskLabelRequest,
+    CreateTaskLabelRequest, LabelAssignmentResponse, PatchTaskLabelRequest, TaskLabelResponse,
+    assign_task_label, create_task_label, delete_task_label, get_task_label,
+    list_task_label_assignments, list_task_labels, patch_task_label, remove_task_label_from_task,
 };
 
 pub mod subscriptions;
 pub use subscriptions::{
-    __path_list_task_subscriptions, __path_subscribe_to_task, __path_unsubscribe_from_task,
-    SubscriptionResponse, list_task_subscriptions, subscribe_to_task, unsubscribe_from_task,
+    __path_list_task_subscriptions, __path_patch_task_subscription, __path_subscribe_to_task,
+    __path_unsubscribe_from_task, PatchSubscriptionRequest, SubscriptionResponse,
+    list_task_subscriptions, patch_task_subscription, subscribe_to_task, unsubscribe_from_task,
 };
 
 pub mod activity;

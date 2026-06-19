@@ -548,7 +548,7 @@ Crate `garraia-workspace` ✅ **schema completo da Fase 3** entregue em 2026-04-
 - [x] `api_keys` (`id`, `user_id`, `label`, `key_hash UNIQUE`, `scopes jsonb`, `created_at`, `revoked_at`, `last_used_at`) — Argon2id pinned, migration 001 ✅
 - [x] `groups` (`id`, `name`, `type`, `created_by`, `settings jsonb`, `created_at`, `updated_at`) — migration 001 ✅
 - [x] `group_members` (`group_id`, `user_id`, `role`, `status`, `joined_at`, `invited_by`) — migration 001 ✅
-- [x] `group_invites` (`id`, `group_id`, `invited_email citext`, `proposed_role`, `token_hash UNIQUE`, `expires_at`, `created_by`, `created_at`, `accepted_at`, `accepted_by`) — migration 001 ✅
+- [x] `group_invites` (`id`, `group_id`, `invited_email citext`, `proposed_role`, `token_hash UNIQUE`, `expires_at`, `created_by`, `created_at`, `accepted_at`, `accepted_by`, `revoked_at`, `revoked_by`) — migration 001 + 021 (plan 0257) ✅
 - [x] `roles`, `permissions`, `role_permissions` — migration 002 ✅ (5 roles + 22 permissions + 63 role_permissions, seed estático)
 - [x] `audit_events` (`id`, `group_id`, `actor_user_id`, `actor_label`, `action`, `resource_type`, `resource_id`, `ip`, `user_agent`, `metadata`, `created_at`) — NO FK intencional, sobrevive CASCADE para LGPD art. 8 §5 / GDPR art. 17(1), migration 002 ✅
 - [x] `group_members_single_owner_idx` — partial unique index `WHERE role = 'owner'` (fecha GAR-414 M1), migration 002 ✅
@@ -608,9 +608,36 @@ Contrato versionado. Usar `utoipa` para gerar OpenAPI + Swagger UI em `/docs`.
 - [x] `POST /v1/groups/{group_id}/members/{user_id}:setRole` — plan 0020, entregue 2026-04-20
 - [x] `DELETE /v1/groups/{group_id}/members/{user_id}` — plan 0020, entregue 2026-04-20
 - [x] `GET /v1/groups/{group_id}/members` — plan 0097 / [GAR-574](https://linear.app/chatgpt25/issue/GAR-574), implementado 2026-05-11 (Florida)
+- [x] `GET /v1/groups/{group_id}/members/{user_id}` (fetch single group member) — plan 0286 / [GAR-823](https://linear.app/chatgpt25/issue/GAR-823) ✅
 - [x] `GET /v1/groups/{group_id}/invites` — plan 0097 / [GAR-574](https://linear.app/chatgpt25/issue/GAR-574), implementado 2026-05-11 (Florida)
+- [x] `GET /v1/groups/{group_id}/invites/{invite_id}` — plan 0257 / [GAR-780](https://linear.app/chatgpt25/issue/GAR-780) ✅
+- [x] `DELETE /v1/groups/{group_id}/invites/{invite_id}` (revoke) — plan 0257 / [GAR-780](https://linear.app/chatgpt25/issue/GAR-780) ✅
+- [x] `DELETE /v1/groups/{group_id}` (owner-only soft-delete; sets `archived_at`; idempotent 204; `GroupArchived` audit; migration 031) — plan 0346 / [GAR-890](https://linear.app/chatgpt25/issue/GAR-890) ✅
 - [x] `GET /v1/me` — plan 0015 (skeleton Fase 3.4), entregue 2026-04-14
 - [x] `PATCH /v1/me` (display_name self-update) — plan 0110 / [GAR-599](https://linear.app/chatgpt25/issue/GAR-599) ✅
+- [x] `GET /v1/me/chats` — caller-scoped chat membership inbox (cursor-paginated, type filter) — plan 0245 / [GAR-765](https://linear.app/chatgpt25/issue/GAR-765) ✅
+- [x] `GET /v1/me/files` — caller-scoped uploaded-files inbox (cursor-paginated, optional folder filter) — plan 0246 / [GAR-767](https://linear.app/chatgpt25/issue/GAR-767) ✅
+- [x] `GET /v1/me/memory` — caller-scoped personal memory inbox (cursor-paginated, optional kind filter) — plan 0249 / [GAR-770](https://linear.app/chatgpt25/issue/GAR-770) ✅
+- [x] `GET /v1/me/tasks` — caller-scoped task assignment inbox (cursor-paginated) — plan 0243 / [GAR-763](https://linear.app/chatgpt25/issue/GAR-763) ✅
+- [x] `GET /v1/me/mentions` — caller-scoped @mention inbox (cursor-paginated) — plan 0244 / [GAR-764](https://linear.app/chatgpt25/issue/GAR-764) ✅
+- [x] `GET /v1/me/invites` — caller-scoped pending group invites inbox (cursor-paginated) — plan 0255 / [GAR-777](https://linear.app/chatgpt25/issue/GAR-777) ✅
+- [x] `POST /v1/me/invites/{invite_id}/decline` — invitee-side explicit decline; `declined_at`+`declined_by` (migration 025); `InviteDeclined` audit event; re-invite enabled — plan 0258 / [GAR-783](https://linear.app/chatgpt25/issue/GAR-783) ✅
+- [x] `POST /v1/me/invites/{invite_id}/accept` — invitee-side authenticated accept (UUID-based, no raw token); atomically sets `accepted_at`+`accepted_by`, inserts `group_members`, emits `InviteAccepted` audit event — plan 0263 / [GAR-794](https://linear.app/chatgpt25/issue/GAR-794) ✅
+- [x] `GET /v1/me/reactions` — caller-scoped emoji-reactions inbox (cursor-paginated, grouped by message with `ARRAY_AGG` emojis) — plan 0260 / [GAR-788](https://linear.app/chatgpt25/issue/GAR-788) ✅
+- [x] `GET /v1/me/threads` — caller-scoped thread participation inbox (cursor-paginated, `include_resolved` filter; creator vs participant role) — plan 0261 / [GAR-790](https://linear.app/chatgpt25/issue/GAR-790) ✅
+- [x] `GET /v1/me/sessions` — list caller's active sessions (cursor-paginated; `expires_at`, `created_at`, `user_agent`) — plan 0327 / [GAR-866](https://linear.app/chatgpt25/issue/GAR-866) ✅ merged PR #742 (`fc5d996`)
+- [x] `DELETE /v1/me/sessions/{session_id}` — revoke single session by ID — plan 0327 / [GAR-866](https://linear.app/chatgpt25/issue/GAR-866) ✅ merged PR #742 (`fc5d996`)
+- [x] `DELETE /v1/me/sessions` — bulk-revoke all active sessions ("sign out from all devices"); `SessionsAllRevoked` audit event — plan 0328 / [GAR-869](https://linear.app/chatgpt25/issue/GAR-869) ✅ merged PR #747 (`ed38d1a`)
+- [x] `POST /v1/me/api-keys` — create API key (`gai_<base64url>`, Argon2id hash stored, raw key returned once); `ApiKeyCreated` audit — plan 0331 / [GAR-871](https://linear.app/chatgpt25/issue/GAR-871) ✅
+- [x] `GET /v1/me/api-keys` — cursor-paginated list of caller's API keys (active + revoked history; key hash never returned) — plan 0331 / [GAR-871](https://linear.app/chatgpt25/issue/GAR-871) ✅
+- [x] `GET /v1/me/api-keys/{key_id}` — single API key metadata — plan 0331 / [GAR-871](https://linear.app/chatgpt25/issue/GAR-871) ✅
+- [x] `DELETE /v1/me/api-keys/{key_id}` — soft-revoke (`revoked_at = now()`), idempotent 204; `ApiKeyRevoked` audit — plan 0331 / [GAR-871](https://linear.app/chatgpt25/issue/GAR-871) ✅
+- [x] `PATCH /v1/me/api-keys/{key_id}` — update label and/or scopes of an active API key; 409 if revoked; `ApiKeyUpdated` audit — plan 0334 / [GAR-874](https://linear.app/chatgpt25/issue/GAR-874) ✅
+- [x] `PATCH /v1/me/password` — change own password: verify current + Argon2id re-hash via `LoginPool` BYPASSRLS; dual-verify PBKDF2 legacy; anti-enumeration 403; `PasswordChanged` audit — plan 0335 / [GAR-876](https://linear.app/chatgpt25/issue/GAR-876) ✅
+- [x] `GET /v1/me/audit` — cursor-paginated personal audit trail (login, logout, signup, password.changed, api_key.*, session.* events); keyset `(created_at DESC, id DESC)`; `action` filter; no PII fields — plan 0340 / [GAR-881](https://linear.app/chatgpt25/issue/GAR-881) ✅
+- [x] `DELETE /v1/me` — self-service account soft-deletion (LGPD art. 18 / GDPR art. 17); sets `users.status = 'deleted'`, revokes all active sessions atomically, emits `account.self_deleted` audit event; 409 if already deleted; hard delete deferred to Fase 5.3 retention worker — plan 0343 / [GAR-884](https://linear.app/chatgpt25/issue/GAR-884) ✅
+- [x] `GET /v1/me/export` — LGPD art. 20 / GDPR arts. 15 & 20 right to data portability; JSON export of profile, sessions, api_keys (metadata only), audit_events, group_memberships; `Content-Disposition: attachment`; `AccountDataExported` audit — plan 0344 / [GAR-885](https://linear.app/chatgpt25/issue/GAR-885) ✅
+- [x] `POST /v1/me/anonymize` — LGPD art. 12 / GDPR art. 4(5) right to anonymization; replaces `login` with `anon-{hex}@garraanon.local` via `LoginPool` BYPASSRLS, sets `users.status = 'anonymized'` + `display_name = 'Usuário Anônimo'`, revokes all sessions atomically; 409 if already anonymized/deleted; `AccountAnonymized` audit — plan 0345 / [GAR-888](https://linear.app/chatgpt25/issue/GAR-888) ✅
 
 **Chats**
 
@@ -626,9 +653,13 @@ Contrato versionado. Usar `utoipa` para gerar OpenAPI + Swagger UI em `/docs`.
 - [x] SSE `GET /v1/chats/{chat_id}/stream` (broadcast cap-64, backpressure via `stream.lagged`) — plan 0162, merged 2026-05-21 via PR #459. Design: SSE escolhido em vez de WebSocket — canal de chat é server→client apenas; cross-tenant isolation via FORCE RLS + `WHERE group_id = $caller_group_id`.
   - [x] **Follow-up F-3** ([GAR-679](https://linear.app/chatgpt25/issue/GAR-679)): SSE rate-limit per user/group sobre `/v1/chats/{id}/stream` — DoS hardening. `MAX_SSE_PER_USER = 5`; 6th connection → 429 + `Retry-After: 60`; `SseSlotGuard` RAII + `ChatStreamGuard` decrement. Plan 0163, merged 2026-05-21.
   - [x] **Follow-up F-4** ([GAR-680](https://linear.app/chatgpt25/issue/GAR-680)): audit-log das subscriptions SSE (`chat.subscribed` no handler dentro da tx pré-commit + `chat.unsubscribed` via `tokio::spawn` no `Drop` do `ChatStreamGuard`); `subscriber_count` em metadata, PII-safe. Cobertura: 24 unit tests verdes (3 audit_workspace + 21 chats) + cenário S5 em `rest_v1_chats_sse.rs` (integration, CI). Merged 2026-05-21 via PR [#463](https://github.com/michelbr84/GarraRUST/pull/463) (`a972947`). ✅
-- [x] `POST /v1/messages/{message_id}/attachments` — attach file to message → 201, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). 🔄 In Progress.
-- [x] `GET /v1/messages/{message_id}/attachments?cursor=...` — list attachments (cursor-paginated) → 200, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). 🔄 In Progress.
-- [x] `DELETE /v1/messages/{message_id}/attachments/{file_id}` — detach file (idempotent) → 204, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). 🔄 In Progress.
+- [x] `POST /v1/messages/{message_id}/attachments` — attach file to message → 201, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). ✅
+- [x] `GET /v1/messages/{message_id}/attachments?cursor=...` — list attachments (cursor-paginated) → 200, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). ✅
+- [x] `DELETE /v1/messages/{message_id}/attachments/{file_id}` — detach file (idempotent) → 204, plan 0182 / [GAR-700](https://linear.app/chatgpt25/issue/GAR-700). ✅ Done.
+- [x] `GET /v1/chats/{chat_id}/threads?after=<uuid>&limit=<n>&include_resolved=<bool>` — cursor-paginated list of threads in a chat, plan 0225 / [GAR-740](https://linear.app/chatgpt25/issue/GAR-740), 2026-05-29 (Florida).
+- [x] `GET /v1/threads/{thread_id}` — fetch single thread detail (id, chat_id, root_message_id, title, created_by, resolved_at, created_at) — plan 0265 / [GAR-798](https://linear.app/chatgpt25/issue/GAR-798) ✅
+- [x] `POST /v1/threads/{thread_id}/messages` — post a reply into an existing thread — plan 0276 / [GAR-811](https://linear.app/chatgpt25/issue/GAR-811) ✅
+- [x] `GET /v1/threads/{thread_id}/messages` — list replies in a thread directly by thread_id — plan 0279 / [GAR-814](https://linear.app/chatgpt25/issue/GAR-814) ✅
 
 **Arquivos**
 
@@ -641,8 +672,9 @@ Contrato versionado. Usar `utoipa` para gerar OpenAPI + Swagger UI em `/docs`.
 - [x] `GET /v1/files/{file_id}/download` (streaming bytes via ObjectStore) — plan 0093 / [GAR-564](https://linear.app/chatgpt25/issue/GAR-564), implementado 2026-05-10 (Florida) ✅ PR #250 (`b2de161`)
 - [x] `POST /v1/groups/{group_id}/files/{file_id}/versions` (new content version, direct upload) — plan 0094 / [GAR-567](https://linear.app/chatgpt25/issue/GAR-567), implementado 2026-05-10 (Florida)
 - [x] `GET /v1/groups/{group_id}/files/{file_id}/versions` (list content versions, cursor-paginated) — plan 0095 / [GAR-569](https://linear.app/chatgpt25/issue/GAR-569), implementado 2026-05-10 (Florida) ✅ PR #253 (`0cc9a85`)
+- [x] `GET /v1/groups/{group_id}/files/{file_id}/versions/{version}` (fetch single file version by number) — plan 0283 / [GAR-820](https://linear.app/chatgpt25/issue/GAR-820) ✅
 - [x] `DELETE /v1/files/{file_id}` (soft delete + lixeira) ✅ PR #235 GAR-555
-- [ ] Suporte a **tus** (resumable upload) como alternativa
+- [x] Suporte a **tus** (resumable upload) como alternativa — plan 0041-0047 / [GAR-395](https://linear.app/chatgpt25/issue/GAR-395) ✅ PR #62 (`96f5c03`)
 
 **Memória**
 
@@ -666,6 +698,11 @@ Contrato versionado. Usar `utoipa` para gerar OpenAPI + Swagger UI em `/docs`.
 - [x] `GET /v1/search?...&sort_by=relevance|created_at_desc|created_at_asc` — plan 0195 / [GAR-713](https://linear.app/chatgpt25/issue/GAR-713), implementado 2026-05-26 (Florida). Slice 8: optional `sort_by` parameter; `relevance` (default, `score DESC, created_at DESC, id DESC`), `created_at_desc`, `created_at_asc`; no SQL change — applied on Rust merge; no breaking change.
 - [x] `GET /v1/search?...&types=folders` — plan 0199 / [GAR-716](https://linear.app/chatgpt25/issue/GAR-716), implementado 2026-05-26 (Florida). Slice 9: `folders.name` FTS via `to_tsvector('simple', name)` (no new migration); group scope only; deleted folders excluded; result `type: "folder"`, `excerpt` = name, `sender_user_id` = `created_by`, `kind` = null.
 - [x] `GET /v1/search?...&types=chats` — plan 0200 / [GAR-718](https://linear.app/chatgpt25/issue/GAR-718), implementado 2026-05-27 (Florida). Slice 10: `chats.name || ' ' || coalesce(chats.topic, '')` FTS via `to_tsvector('simple', ...)` (no new migration); group scope only; archived chats excluded; result `type: "chat"`, `excerpt` = name, `sender_user_id` = `created_by`, `kind` = type ('channel','dm','thread'), `chat_id` = null.
+- [x] `GET /v1/search?...&types=task_lists` — plan 0208 / [GAR-721](https://linear.app/chatgpt25/issue/GAR-721), implementado 2026-05-27 (Florida). Slice 11: `task_lists.name || ' ' || coalesce(task_lists.description, '')` FTS via `to_tsvector('simple', ...)` (no new migration); group scope only; archived lists excluded; result `type: "task_list"`, `excerpt` = name, `sender_user_id` = `created_by`, `kind` = type ('list'/'board'/'calendar').
+- [x] `GET /v1/search?...&types=threads` — plan 0211 / [GAR-726](https://linear.app/chatgpt25/issue/GAR-726), implementado 2026-05-28 (Florida). Slice 12: `message_threads.title` FTS via `to_tsvector('simple', title)` (no new migration); JOIN through `chats` for group_id (RLS `message_threads_through_chats`); `title IS NOT NULL` guard; group scope only; result `type: "thread"`, `excerpt` = title, `sender_user_id` = `created_by`, `chat_id` = chat_id, `kind` = null.
+- [x] `GET /v1/search?...&types=users` — plan 0214 / [GAR-730](https://linear.app/chatgpt25/issue/GAR-730), implementado 2026-05-28 (Florida). Slice 13: `users.display_name` FTS via `to_tsvector('simple', display_name)` (no new migration); JOIN through `group_members` for group isolation; `status = 'active'` guard; email excluded from FTS (PII safety); group scope only; result `type: "user"`, `excerpt` = display_name, `sender_user_id` = user's own id, `chat_id` = null, `kind` = null.
+- [x] `GET /v1/search?...&types=groups` — plan 0215 / [GAR-733](https://linear.app/chatgpt25/issue/GAR-733), implementado 2026-05-28 (Florida). Slice 14: `groups.name` FTS via `to_tsvector('simple', name)` (no new migration); user scope only (FORCE RLS migration 018 enforces membership via `app.current_user_id` — no explicit SQL filter needed); result `type: "group"`, `excerpt` = name, `group_id` = group's own id, `sender_user_id` = `created_by`, `kind` = type ('family'/'team'/'personal').
+- [x] `GET /v1/search?...&types=labels` — plan 0219 / [GAR-737](https://linear.app/chatgpt25/issue/GAR-737), implementado 2026-05-29 (Florida). Slice 15: `task_labels.name` FTS via `to_tsvector('simple', name)` (no new migration); group scope only (FORCE RLS `task_labels_group_isolation` migration 006 + explicit `AND group_id = $2`); result `type: "label"`, `excerpt` = name, `kind` = color (`#RRGGBB`), `sender_user_id` = `created_by` (nullable), `chat_id` = null.
 
 **Auditoria**
 
@@ -698,11 +735,15 @@ Novo crate: `garraia-storage`.
 ### 3.6 Chat compartilhado
 
 - [x] Canais por grupo + DMs intra-grupo.
-- [ ] Threads (entidade dedicada, não só `parent_id`).
-- [ ] Reações, menções (`@user`, `@channel`), typing indicators.
-- [x] Anexos via `message_attachments` → `files` — plan 0182 / GAR-700. 🔄 In Progress.
-- [ ] **Bot Garra no chat**: agente pode ser invocado por `/garra <prompt>` e responde respeitando o scope do chat.
-- [ ] **Busca**: Postgres FTS (`tsvector`) com índice GIN; migração para Tantivy quando > 10M mensagens.
+- [x] Threads (entidade dedicada, não só `parent_id`) — plan 0227 / GAR-745 — `PATCH /v1/threads/{id}` + `PATCH /v1/chats/{id}/members/{uid}` mergeados via branch `routine/202605291819-chats-slice7-thread-member-patch`.
+- [x] `GET /v1/chats/{chat_id}/members/{user_id}` (fetch single chat member) — plan 0325 / [GAR-864](https://linear.app/chatgpt25/issue/GAR-864) ✅
+- [x] Reações — `POST/DELETE/GET /v1/messages/{id}/reactions` — plan 0231 / GAR-747.
+- [x] Typing indicator — `POST /v1/chats/{chat_id}/typing` (ephemeral SSE broadcast, no DB write) — plan 0233 / GAR-752.
+- [x] Menções (`@user`, `@channel`) — migration 022 `message_mentions` + `mentions: Vec<Uuid>` em `POST /v1/chats/{id}/messages` + `GET /v1/me/mentions` (cursor-paginated inbox) — plan 0237 / GAR-755.
+- [x] Anexos via `message_attachments` → `files` — plan 0182 / GAR-700. ✅
+- [x] **Bot Garra no chat**: agente pode ser invocado por `/garra <prompt>` e responde respeitando o scope do chat. *(plan 0240, GAR-759)*
+- [x] `GET /v1/me/chats` — caller-scoped chat membership inbox (cursor-paginated, type filter) — plan 0245 / GAR-765.
+- [x] **Busca**: Postgres FTS (`tsvector`) com índice GIN; migração para Tantivy quando > 10M mensagens — slices 1-12 (planos 0084-0085, 0185, 0192-0193, 0200, 0225, 0231-0237 etc.), GAR-549..GAR-726, todos ✅.
 
 **Critério de aceite:**
 
@@ -761,18 +802,24 @@ Módulo dentro de `garraia-workspace`. Schema entregue via migration 006 com **R
 - [x] `DELETE /v1/groups/{group_id}/tasks/{task_id}` (soft delete) — plan 0068 / GAR-518 ✅
 - [x] `POST /v1/groups/{group_id}/tasks/{task_id}/comments` — plan 0069 / GAR-520 ✅
 - [x] `GET /v1/groups/{group_id}/tasks/{task_id}/comments?cursor=...` — plan 0069 / GAR-520 ✅
+- [x] `GET /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}` — fetch single comment (no existence leak for deleted/cross-tenant) — plan 0269 / [GAR-806](https://linear.app/chatgpt25/issue/GAR-806) ✅
 - [x] `DELETE /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}` — plan 0069 / GAR-520 ✅
+- [x] `PATCH /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}` (edit body, sender-only) — plan 0264 / [GAR-795](https://linear.app/chatgpt25/issue/GAR-795) ✅
 - [x] `POST /v1/groups/{group_id}/tasks/{task_id}/assignees` — plan 0077 / GAR-533 ✅
 - [x] `GET /v1/groups/{group_id}/tasks/{task_id}/assignees` — plan 0077 / GAR-533 ✅
 - [x] `DELETE /v1/groups/{group_id}/tasks/{task_id}/assignees/{user_id}` — plan 0077 / GAR-533 ✅
 - [x] `POST /v1/groups/{group_id}/task-labels` — plan 0078 / GAR-536 ✅
 - [x] `GET /v1/groups/{group_id}/task-labels` — plan 0078 / GAR-536 ✅
+- [x] `GET /v1/groups/{group_id}/task-labels/{label_id}` — fetch single label — plan 0267 / [GAR-802](https://linear.app/chatgpt25/issue/GAR-802) ✅
 - [x] `DELETE /v1/groups/{group_id}/task-labels/{label_id}` — plan 0078 / GAR-536 ✅
+- [x] `PATCH /v1/groups/{group_id}/task-labels/{label_id}` — plan 0266 / GAR-800 ✅
 - [x] `POST /v1/groups/{group_id}/tasks/{task_id}/labels` — plan 0078 / GAR-536 ✅
+- [x] `GET /v1/groups/{group_id}/tasks/{task_id}/labels` — list labels assigned to a task — plan 0271 / [GAR-808](https://linear.app/chatgpt25/issue/GAR-808) ✅
 - [x] `DELETE /v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}` — plan 0078 / GAR-536 ✅
 - [x] `POST /v1/groups/{group_id}/tasks/{task_id}/subscriptions` — plan 0079 / GAR-539 ✅
 - [x] `GET /v1/groups/{group_id}/tasks/{task_id}/subscriptions` — plan 0079 / GAR-539 ✅
 - [x] `DELETE /v1/groups/{group_id}/tasks/{task_id}/subscriptions` — plan 0079 / GAR-539 ✅
+- [x] `PATCH /v1/groups/{group_id}/tasks/{task_id}/subscriptions` (update muted flag) — plan 0288 / [GAR-827](https://linear.app/chatgpt25/issue/GAR-827) ✅
 - [x] `GET /v1/groups/{group_id}/tasks/{task_id}/activity?cursor=...` — plan 0080 / GAR-541 ✅
 - [x] `POST /v1/groups/{group_id}/tasks/{task_id}/attachments` — plan 0096 / GAR-572 ✅
 - [x] `GET /v1/groups/{group_id}/tasks/{task_id}/attachments` — plan 0096 / GAR-572 ✅
@@ -818,22 +865,33 @@ Módulo dentro de `garraia-workspace`. Schema entregue via migration 006 com **R
 
 **Schema:**
 
-- [ ] `doc_pages` (`id`, `group_id`, `parent_page_id`, `title`, `icon`, `cover_file_id`, `created_by`, `created_at`, `updated_at`, `archived_at`)
-- [ ] `doc_blocks` (`id`, `page_id`, `parent_block_id`, `position`, `type`, `content_jsonb`, `created_at`, `updated_at`) — tipos: `heading|paragraph|todo|bullet|numbered|code|quote|callout|divider|file_embed|task_embed|chat_embed|image`
-- [ ] `doc_page_versions` (`id`, `page_id`, `snapshot_jsonb`, `created_by`, `created_at`)
-- [ ] `doc_page_mentions` (`page_id`, `mentioned_user_id | mentioned_task_id | mentioned_file_id`)
+- [x] `doc_pages` (`id`, `group_id`, `parent_page_id`, `title`, `icon`, `cover_file_id`, `created_by`, `created_at`, `updated_at`, `archived_at`) — migration 026, plan 0297 / GAR-835
+- [x] `doc_blocks` (`id`, `page_id`, `parent_block_id`, `position`, `type`, `content_jsonb`, `created_at`, `updated_at`) — tipos: `heading|paragraph|todo|bullet|numbered|code|quote|callout|divider|file_embed|task_embed|chat_embed|image` — migration 027, plan 0304 / GAR-840
+- [x] `doc_page_versions` (`id`, `page_id`, `snapshot_jsonb`, `created_by`, `created_at`) — migration 028, plan 0307 / GAR-845
+- [x] `doc_page_mentions` (`page_id`, `mentioned_user_id`, `group_id`, `created_at`) — migration 029, plan 0318 / GAR-858
 
 **API:**
 
-- [ ] `POST /v1/groups/{group_id}/doc-pages`
-- [ ] `GET /v1/groups/{group_id}/doc-pages?parent=...`
-- [ ] `GET /v1/doc-pages/{page_id}` (com blocks)
-- [ ] `PATCH /v1/doc-pages/{page_id}`
-- [ ] `POST /v1/doc-pages/{page_id}/blocks`
-- [ ] `PATCH /v1/doc-blocks/{block_id}`
-- [ ] `DELETE /v1/doc-blocks/{block_id}`
-- [ ] `POST /v1/doc-pages/{page_id}:duplicate`
-- [ ] `GET /v1/doc-pages/{page_id}/versions`
+- [x] `POST /v1/groups/{group_id}/doc-pages` — plan 0297 / GAR-835
+- [x] `GET /v1/groups/{group_id}/doc-pages?parent=...` — plan 0297 / GAR-835
+- [x] `GET /v1/doc-pages/{page_id}` — plan 0299 / GAR-837
+- [x] `PATCH /v1/doc-pages/{page_id}` — plan 0299 / GAR-837
+- [x] `DELETE /v1/doc-pages/{page_id}` (soft-delete) — plan 0299 / GAR-837
+- [x] `POST /v1/doc-pages/{page_id}/blocks` — plan 0304 / GAR-840
+- [x] `GET /v1/doc-pages/{page_id}/blocks` — plan 0304 / GAR-840
+- [x] `GET /v1/doc-blocks/{block_id}` — plan 0314 / GAR-853
+- [x] `PATCH /v1/doc-blocks/{block_id}` — plan 0304 / GAR-840
+- [x] `DELETE /v1/doc-blocks/{block_id}` — plan 0304 / GAR-840
+- [x] `POST /v1/doc-pages/{page_id}:duplicate` — plan 0309 / GAR-847
+- [x] `GET /v1/doc-pages/{page_id}/versions` — plan 0307 / GAR-845
+- [x] `POST /v1/doc-pages/{page_id}/versions` (snapshot) — plan 0307 / GAR-845
+- [x] `GET /v1/doc-pages/{page_id}/versions/{version_id}` — plan 0307 / GAR-845
+- [x] `POST /v1/doc-pages/{page_id}/versions/{version_id}/restore` — plan 0312 / GAR-850
+- [x] `POST /v1/doc-pages/{page_id}/mentions` — add @mention (201/200 idempotent) — plan 0318 / GAR-858
+- [x] `GET /v1/doc-pages/{page_id}/mentions` — list mentions (cursor-paginated) — plan 0318 / GAR-858
+- [x] `DELETE /v1/doc-pages/{page_id}/mentions/{user_id}` — remove mention (204 idempotent) — plan 0318 / GAR-858
+- [x] `GET /v1/me/doc-page-mentions` — caller @mention inbox for doc pages (cursor-paginated) — plan 0318 / GAR-858
+- [x] `GET /v1/me/doc-pages` — caller-authored doc pages inbox (cursor-paginated) — plan 0322 / GAR-860
 
 **Colaboração em tempo real:**
 
@@ -850,8 +908,8 @@ Módulo dentro de `garraia-workspace`. Schema entregue via migration 006 com **R
 
 **Busca:**
 
-- [ ] FTS indexa `doc_blocks.content_jsonb` via tsvector.
-- [ ] Busca unificada passa a cobrir `messages + files + memory + tasks + docs`.
+- [x] FTS indexa `doc_blocks.content_jsonb` via tsvector.
+- [x] Busca unificada passa a cobrir `messages + files + memory + tasks + docs`.
 
 **Critério de aceite Tier 2:**
 

@@ -57,6 +57,30 @@ pub enum WorkspaceAuditAction {
     /// Metadata: `{ invited_email, proposed_role }`.
     InviteAccepted,
 
+    /// A pending invite was revoked by an owner or admin via
+    /// `DELETE /v1/groups/{id}/invites/{invite_id}` (plan 0257 /
+    /// GAR-780, Fase 3.4 invite revocation).
+    ///
+    /// Emitted only when `revoked_at` transitions from NULL (first
+    /// revocation). Already-revoked or accepted invites return 404
+    /// without emitting an event.
+    ///
+    /// `resource_type = "group_invites"`, `resource_id = invite.id`.
+    /// Metadata: `{ proposed_role }` — never `invited_email` (PII).
+    InviteRevoked,
+
+    /// A pending invite was declined by the invitee via
+    /// `POST /v1/me/invites/{invite_id}/decline` (plan 0258 /
+    /// GAR-783, Fase 3.4 invite decline).
+    ///
+    /// Emitted only when `declined_at` transitions from NULL (first
+    /// decline). Already-declined, accepted, or revoked invites return
+    /// 404 without emitting an event.
+    ///
+    /// `resource_type = "group_invites"`, `resource_id = invite.id`.
+    /// Metadata: `{ proposed_role }` — never `invited_email` (PII).
+    InviteDeclined,
+
     /// A member's role was changed via
     /// `POST /v1/groups/{id}/members/{user_id}/setRole` (plan 0020).
     ///
@@ -149,6 +173,22 @@ pub enum WorkspaceAuditAction {
     /// `message_threads` row is the source of truth for authorized
     /// read-back.
     ThreadCreated,
+
+    /// A thread was updated via `PATCH /v1/threads/{thread_id}` (plan 0227 /
+    /// GAR-745, epic GAR-WS-CHAT slice 7).
+    ///
+    /// `resource_type = "message_threads"`, `resource_id = "{thread_id}"`.
+    /// Metadata: `{ changed_fields: ["resolved"|"title"] }`. Title is
+    /// user-controlled and may contain PII — never logged in metadata.
+    ThreadUpdated,
+
+    /// A reply was posted to a thread via
+    /// `POST /v1/threads/{thread_id}/messages` (plan 0274 / GAR-811).
+    ///
+    /// `resource_type = "messages"`, `resource_id = "{message_id}"`.
+    /// Metadata: `{ thread_id, body_len }`. Body text is user-generated and
+    /// may contain PII — only its length is carried in the audit record.
+    ThreadReplied,
 
     /// A memory item was created via `POST /v1/memory` (plan 0062 /
     /// GAR-514, epic GAR-WS-MEMORY slice 1).
@@ -263,6 +303,15 @@ pub enum WorkspaceAuditAction {
     /// Metadata: `{ body_len }`.
     TaskCommentDeleted,
 
+    /// A comment body was edited via
+    /// `PATCH /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}`
+    /// (plan 0264 / GAR-795).
+    ///
+    /// `resource_type = "task_comments"`, `resource_id = "{comment_id}"`.
+    /// Metadata: `{ body_len }`. Body text is user-controlled PII — only
+    /// length is carried.
+    TaskCommentEdited,
+
     /// A chat was updated (name/topic changed) via
     /// `PATCH /v1/chats/{chat_id}` (plan 0076 / GAR-530,
     /// epic GAR-WS-CHAT slice 4).
@@ -296,6 +345,14 @@ pub enum WorkspaceAuditAction {
     /// `resource_type = "chat_members"`, `resource_id = "{user_id}"`.
     /// Metadata: `{ role }`.
     ChatMemberRemoved,
+
+    /// A chat member's settings were updated via
+    /// `PATCH /v1/chats/{chat_id}/members/{user_id}` (plan 0227 / GAR-745,
+    /// epic GAR-WS-CHAT slice 7).
+    ///
+    /// `resource_type = "chat_members"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{ changed_fields: ["muted"|"last_read_at"|"role"] }`.
+    ChatMemberUpdated,
 
     /// A subscriber connected to a chat's SSE stream via
     /// `GET /v1/chats/{chat_id}/stream` (plan 0162 / GAR-678, audit follow-up
@@ -353,6 +410,13 @@ pub enum WorkspaceAuditAction {
     /// `resource_type = "task_labels"`, `resource_id = "{label_id}"`.
     /// Metadata: `{ assignments_cascade: true }`.
     TaskLabelDeleted,
+
+    /// A task label's name/color was edited via
+    /// `PATCH /v1/groups/{group_id}/task-labels/{label_id}` (plan 0266 / GAR-800).
+    ///
+    /// `resource_type = "task_labels"`, `resource_id = "{label_id}"`.
+    /// Metadata: `{ name_len: N, color }` — no raw label name (PII-safe).
+    TaskLabelEdited,
 
     /// A label was assigned to a task via
     /// `POST /v1/groups/{group_id}/tasks/{task_id}/labels` (plan 0078 / GAR-536,
@@ -489,6 +553,12 @@ pub enum WorkspaceAuditAction {
     /// Metadata: `{ file_id, group_id, version_count: usize }` — PII-safe.
     FileVersionsListed,
 
+    /// Emitted when `GET /v1/groups/{group_id}/files/{file_id}/versions/{version}`
+    /// returns successfully (plan 0283, GAR-820).
+    /// `resource_type = "files"`, `resource_id = "{file_id}"`.
+    /// Metadata: `{ file_id, group_id, version: i32 }` — PII-safe.
+    FileVersionRead,
+
     /// An existing file was attached to a task via
     /// `POST /v1/groups/{group_id}/tasks/{task_id}/attachments`
     /// (plan 0096 / GAR-572, Fase 3.4 tasks slice 9).
@@ -521,6 +591,194 @@ pub enum WorkspaceAuditAction {
     /// `resource_type = "message_attachments"`, `resource_id = "{message_id}"`.
     /// Metadata: `{ message_id, file_id }` — PII-safe.
     MessageFileDetached,
+
+    /// A user added an emoji reaction to a message via
+    /// `POST /v1/messages/{message_id}/reactions`
+    /// (plan 0231 / GAR-747, Fase 3.4 chats slice 8).
+    ///
+    /// `resource_type = "message_reactions"`, `resource_id = "{message_id}"`.
+    /// Metadata: `{ emoji_len: N }` — length of the emoji string only (PII-safe;
+    /// the emoji itself is not a secret but we avoid storing user preferences in
+    /// the audit log for consistency with the redaction invariant).
+    MessageReactionAdded,
+
+    /// A user removed their emoji reaction from a message via
+    /// `DELETE /v1/messages/{message_id}/reactions/{emoji}`
+    /// (plan 0231 / GAR-747, Fase 3.4 chats slice 8).
+    ///
+    /// Emitted only when a row was actually deleted (idempotent DELETE emits
+    /// no event if the reaction was already absent).
+    /// `resource_type = "message_reactions"`, `resource_id = "{message_id}"`.
+    /// Metadata: `{ emoji_len: N }` — PII-safe.
+    MessageReactionRemoved,
+
+    /// One or more users were @mentioned in a message via
+    /// `POST /v1/chats/{chat_id}/messages` with a non-empty `mentions` list
+    /// (plan 0237 / GAR-755, Fase 3.4 chats slice 10).
+    ///
+    /// `resource_type = "message_mentions"`, `resource_id = "{message_id}"`.
+    /// Metadata: `{ mention_count: N }` — count only (PII-safe; no user IDs).
+    MessageMentionCreated,
+    /// A new doc page was created via
+    /// `POST /v1/groups/{group_id}/doc-pages` (plan 0297 / GAR-834).
+    ///
+    /// `resource_type = "doc_pages"`, `resource_id = "{page_id}"`.
+    /// Metadata: `{ title_len: N }` — length only (no raw title, PII-safe).
+    DocPageCreated,
+    /// A doc page was updated via `PATCH /v1/doc-pages/{page_id}`
+    /// (plan 0301 / GAR-837).
+    ///
+    /// `resource_type = "doc_pages"`, `resource_id = "{page_id}"`.
+    /// Metadata: `{ fields_updated: ["title", "icon", ...] }` — field names only.
+    DocPageUpdated,
+    /// A doc page was soft-deleted via `DELETE /v1/doc-pages/{page_id}`
+    /// (plan 0301 / GAR-837).
+    ///
+    /// `resource_type = "doc_pages"`, `resource_id = "{page_id}"`.
+    /// Metadata: `{}`.
+    DocPageDeleted,
+    /// A new doc block was created via
+    /// `POST /v1/doc-pages/{page_id}/blocks` (plan 0302 / GAR-840).
+    ///
+    /// `resource_type = "doc_blocks"`, `resource_id = "{block_id}"`.
+    /// Metadata: `{ block_type: "...", position: N }` — type and position
+    /// only, no `content_jsonb` (user-generated content, PII risk).
+    DocBlockCreated,
+    /// A doc block was updated via `PATCH /v1/doc-blocks/{block_id}`.
+    ///
+    /// `resource_type = "doc_blocks"`, `resource_id = "{block_id}"`.
+    /// Metadata: `{ fields_updated: [...] }` — field names only.
+    DocBlockUpdated,
+    /// A doc block was deleted via `DELETE /v1/doc-blocks/{block_id}`.
+    ///
+    /// `resource_type = "doc_blocks"`, `resource_id = "{block_id}"`.
+    /// Metadata: `{ block_type: "..." }`.
+    DocBlockDeleted,
+    /// A manual version snapshot was created via
+    /// `POST /v1/doc-pages/{page_id}/versions` (plan 0307 / GAR-845).
+    ///
+    /// `resource_type = "doc_page_versions"`, `resource_id = "{version_id}"`.
+    /// Metadata: `{ block_count: N }` — count only (no content, PII-safe).
+    DocPageVersionCreated,
+    /// A doc page was duplicated via
+    /// `POST /v1/doc-pages/{page_id}/duplicate` (plan 0309 / GAR-847).
+    ///
+    /// `resource_type = "doc_pages"`, `resource_id = "{new_page_id}"`.
+    /// Metadata: `{ source_page_id: UUID, block_count: N }`.
+    DocPageDuplicated,
+    /// A doc page was restored to a prior version snapshot via
+    /// `POST /v1/doc-pages/{page_id}/versions/{version_id}/restore` (plan 0312 / GAR-850).
+    ///
+    /// `resource_type = "doc_page_versions"`, `resource_id = "{version_id}"`.
+    /// Metadata: `{ source_version_id: UUID, block_count: N }`.
+    DocPageVersionRestored,
+    /// A user was @mentioned in a doc page via
+    /// `POST /v1/doc-pages/{page_id}/mentions` (plan 0318 / GAR-858).
+    ///
+    /// `resource_type = "doc_page_mentions"`, `resource_id = "{page_id}"`.
+    /// Metadata: `{ mentioned_user_id: UUID }` — PII-safe (no mention body).
+    DocPageMentionAdded,
+
+    /// A session was explicitly revoked by the authenticated user via
+    /// `DELETE /v1/me/sessions/{session_id}` (plan 0326 / GAR-866).
+    ///
+    /// Sessions are user-scoped, not group-scoped. `group_id` in the
+    /// audit row carries the nil-uuid (`00000000-...`) by convention —
+    /// `app.current_group_id` is set to nil-uuid before the INSERT so
+    /// the `audit_events_group_or_self` WITH CHECK passes (branch 1).
+    ///
+    /// `resource_type = "sessions"`, `resource_id = "{session_id}"`.
+    /// Metadata: `{}` — no PII; device info is not logged.
+    SessionRevoked,
+
+    /// All of the caller's active sessions were bulk-revoked via
+    /// `DELETE /v1/me/sessions` (plan 0328 / GAR-869).
+    ///
+    /// Sessions are user-scoped, not group-scoped. `group_id` carries the
+    /// nil-uuid by convention (same as `SessionRevoked` above).
+    ///
+    /// `resource_type = "sessions"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{"count": N}` — number of sessions revoked. No PII.
+    /// Not emitted when `count == 0` (nothing to record).
+    SessionsAllRevoked,
+
+    /// A new API key was created via `POST /v1/me/api-keys` (plan 0331 / GAR-871).
+    ///
+    /// API keys are user-scoped, not group-scoped. `group_id` in the audit
+    /// row carries the nil-uuid (`00000000-...`) by convention.
+    ///
+    /// `resource_type = "api_keys"`, `resource_id = "{key_id}"`.
+    /// Metadata: `{"label_len": N}` — label length only; raw key and hash are NOT logged.
+    ApiKeyCreated,
+
+    /// An API key was revoked via `DELETE /v1/me/api-keys/{key_id}` (plan 0331 / GAR-871).
+    ///
+    /// API keys are user-scoped, not group-scoped. `group_id` carries the
+    /// nil-uuid by convention (same as `ApiKeyCreated` above).
+    ///
+    /// `resource_type = "api_keys"`, `resource_id = "{key_id}"`.
+    /// Metadata: `{}` — no PII.
+    ApiKeyRevoked,
+
+    /// An API key's label/scopes were updated via `PATCH /v1/me/api-keys/{key_id}` (plan 0334 / GAR-874).
+    ///
+    /// `resource_type = "api_keys"`, `resource_id = "{key_id}"`.
+    /// Metadata: `{"label_len": N}` — label length only; raw label is NOT logged.
+    ApiKeyUpdated,
+
+    /// The caller's own password was changed via `PATCH /v1/me/password` (plan 0335 / GAR-876).
+    ///
+    /// Password changes are user-scoped, not group-scoped. `group_id` carries
+    /// the nil-uuid by convention (same as `SessionRevoked` / `ApiKeyCreated`).
+    ///
+    /// `resource_type = "user_identities"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{}` — no PII; old and new hashes are NEVER logged.
+    PasswordChanged,
+
+    /// The caller soft-deleted their own account via `DELETE /v1/me` (plan 0343 / GAR-884).
+    ///
+    /// Sets `users.status = 'deleted'` (tombstone). All active sessions are
+    /// revoked atomically in the same transaction. Hard deletion is deferred
+    /// to a future retention worker (Fase 5.3 / LGPD art. 18 / GDPR art. 17).
+    ///
+    /// Account deletion is user-scoped, not group-scoped. `group_id` carries
+    /// the nil-uuid by convention (same as `SessionRevoked` / `PasswordChanged`).
+    ///
+    /// `resource_type = "users"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{}` — no PII; email and display_name are NEVER logged.
+    AccountSelfDeleted,
+
+    /// The caller exported their own personal data via `GET /v1/me/export`
+    /// (plan 0344 / GAR-885, LGPD art. 20 / GDPR arts. 15 & 20).
+    ///
+    /// `group_id = nil-uuid` (user-scoped, same convention as `PasswordChanged`).
+    /// `resource_type = "users"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{ "sections": [...] }` — list of exported sections, no PII.
+    AccountDataExported,
+
+    /// Emitted by `POST /v1/me/anonymize` (plan 0345 / GAR-888).
+    ///
+    /// The caller's `user_identities.login` was replaced with a non-identifiable
+    /// token and `users.display_name` was set to `'Usuário Anônimo'`.
+    /// Status set to `'anonymized'` (migration 030, LGPD art. 12 / GDPR art. 4(5)).
+    ///
+    /// Account-level: `group_id` is nil-uuid by convention.
+    /// `resource_type = "users"`, `resource_id = "{user_id}"`.
+    /// Metadata: `{}` — no PII.
+    AccountAnonymized,
+
+    /// The group was soft-deleted (archived) via `DELETE /v1/groups/{id}`
+    /// (plan 0346 / GAR-890). Owner-only (`Action::GroupDelete`).
+    ///
+    /// Sets `groups.archived_at = now()` (migration 031). Group data is
+    /// preserved; hard deletion is deferred to Fase 5.3 retention worker.
+    /// Idempotent: emitted only on the first archival (when
+    /// `archived_at` transitions from NULL to non-NULL).
+    ///
+    /// `resource_type = "groups"`, `resource_id = "{group_id}"`.
+    /// Metadata: `{ "name_len": usize }` — structural only, no PII (group
+    /// name is user-controlled and may contain identifiable information).
+    GroupArchived,
 }
 
 impl WorkspaceAuditAction {
@@ -528,6 +786,8 @@ impl WorkspaceAuditAction {
     pub fn as_str(self) -> &'static str {
         match self {
             WorkspaceAuditAction::InviteAccepted => "invite.accepted",
+            WorkspaceAuditAction::InviteRevoked => "invite.revoked",
+            WorkspaceAuditAction::InviteDeclined => "invite.declined",
             WorkspaceAuditAction::MemberRoleChanged => "member.role_changed",
             WorkspaceAuditAction::MemberRemoved => "member.removed",
             WorkspaceAuditAction::UploadCompleted => "upload.completed",
@@ -538,6 +798,8 @@ impl WorkspaceAuditAction {
             WorkspaceAuditAction::MessageEdited => "message.edited",
             WorkspaceAuditAction::MessageDeleted => "message.deleted",
             WorkspaceAuditAction::ThreadCreated => "thread.created",
+            WorkspaceAuditAction::ThreadUpdated => "thread.updated",
+            WorkspaceAuditAction::ThreadReplied => "thread.replied",
             WorkspaceAuditAction::MemoryCreated => "memory.created",
             WorkspaceAuditAction::MemoryDeleted => "memory.deleted",
             WorkspaceAuditAction::MemoryPinned => "memory.pinned",
@@ -550,16 +812,19 @@ impl WorkspaceAuditAction {
             WorkspaceAuditAction::TaskListArchived => "task_list.archived",
             WorkspaceAuditAction::TaskCommentCreated => "task.comment.created",
             WorkspaceAuditAction::TaskCommentDeleted => "task.comment.deleted",
+            WorkspaceAuditAction::TaskCommentEdited => "task.comment.edited",
             WorkspaceAuditAction::ChatUpdated => "chat.updated",
             WorkspaceAuditAction::ChatArchived => "chat.archived",
             WorkspaceAuditAction::ChatMemberAdded => "chat.member.added",
             WorkspaceAuditAction::ChatMemberRemoved => "chat.member.removed",
+            WorkspaceAuditAction::ChatMemberUpdated => "chat.member.updated",
             WorkspaceAuditAction::ChatSubscribed => "chat.subscribed",
             WorkspaceAuditAction::ChatUnsubscribed => "chat.unsubscribed",
             WorkspaceAuditAction::TaskAssigneeAdded => "task.assignee.added",
             WorkspaceAuditAction::TaskAssigneeRemoved => "task.assignee.removed",
             WorkspaceAuditAction::TaskLabelCreated => "task_label.created",
             WorkspaceAuditAction::TaskLabelDeleted => "task_label.deleted",
+            WorkspaceAuditAction::TaskLabelEdited => "task_label.edited",
             WorkspaceAuditAction::TaskLabelAssigned => "task.label.assigned",
             WorkspaceAuditAction::TaskLabelRemoved => "task.label.removed",
             WorkspaceAuditAction::TaskSubscribed => "task.subscribed",
@@ -574,10 +839,34 @@ impl WorkspaceAuditAction {
             WorkspaceAuditAction::FileDownloadIssued => "file.download_issued",
             WorkspaceAuditAction::FileVersionCreated => "file.version.created",
             WorkspaceAuditAction::FileVersionsListed => "file.versions.listed",
+            WorkspaceAuditAction::FileVersionRead => "file.version.read",
             WorkspaceAuditAction::TaskFileAttached => "task.file.attached",
             WorkspaceAuditAction::TaskFileDetached => "task.file.detached",
             WorkspaceAuditAction::MessageFileAttached => "message.file.attached",
             WorkspaceAuditAction::MessageFileDetached => "message.file.detached",
+            WorkspaceAuditAction::MessageReactionAdded => "message.reaction.added",
+            WorkspaceAuditAction::MessageReactionRemoved => "message.reaction.removed",
+            WorkspaceAuditAction::MessageMentionCreated => "message.mention.created",
+            WorkspaceAuditAction::DocPageCreated => "doc_page.created",
+            WorkspaceAuditAction::DocPageUpdated => "doc_page.updated",
+            WorkspaceAuditAction::DocPageDeleted => "doc_page.deleted",
+            WorkspaceAuditAction::DocBlockCreated => "doc_block.created",
+            WorkspaceAuditAction::DocBlockUpdated => "doc_block.updated",
+            WorkspaceAuditAction::DocBlockDeleted => "doc_block.deleted",
+            WorkspaceAuditAction::DocPageVersionCreated => "doc_page.version_created",
+            WorkspaceAuditAction::DocPageDuplicated => "doc_page.duplicated",
+            WorkspaceAuditAction::DocPageVersionRestored => "doc_page.version_restored",
+            WorkspaceAuditAction::DocPageMentionAdded => "doc_page.mention_added",
+            WorkspaceAuditAction::SessionRevoked => "session.revoked",
+            WorkspaceAuditAction::SessionsAllRevoked => "session.all_revoked",
+            WorkspaceAuditAction::ApiKeyCreated => "api_key.created",
+            WorkspaceAuditAction::ApiKeyRevoked => "api_key.revoked",
+            WorkspaceAuditAction::ApiKeyUpdated => "api_key.updated",
+            WorkspaceAuditAction::PasswordChanged => "password.changed",
+            WorkspaceAuditAction::AccountSelfDeleted => "account.self_deleted",
+            WorkspaceAuditAction::AccountDataExported => "account.data_exported",
+            WorkspaceAuditAction::AccountAnonymized => "account.anonymized",
+            WorkspaceAuditAction::GroupArchived => "group.archived",
         }
     }
 }
@@ -649,6 +938,14 @@ mod tests {
             "invite.accepted"
         );
         assert_eq!(
+            WorkspaceAuditAction::InviteRevoked.as_str(),
+            "invite.revoked"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::InviteDeclined.as_str(),
+            "invite.declined"
+        );
+        assert_eq!(
             WorkspaceAuditAction::MemberRoleChanged.as_str(),
             "member.role_changed"
         );
@@ -681,6 +978,14 @@ mod tests {
         assert_eq!(
             WorkspaceAuditAction::ThreadCreated.as_str(),
             "thread.created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ThreadUpdated.as_str(),
+            "thread.updated"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ThreadReplied.as_str(),
+            "thread.replied"
         );
         assert_eq!(
             WorkspaceAuditAction::MemoryCreated.as_str(),
@@ -717,6 +1022,10 @@ mod tests {
             WorkspaceAuditAction::TaskCommentDeleted.as_str(),
             "task.comment.deleted"
         );
+        assert_eq!(
+            WorkspaceAuditAction::TaskCommentEdited.as_str(),
+            "task.comment.edited"
+        );
         assert_eq!(WorkspaceAuditAction::ChatUpdated.as_str(), "chat.updated");
         assert_eq!(WorkspaceAuditAction::ChatArchived.as_str(), "chat.archived");
         assert_eq!(
@@ -726,6 +1035,10 @@ mod tests {
         assert_eq!(
             WorkspaceAuditAction::ChatMemberRemoved.as_str(),
             "chat.member.removed"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ChatMemberUpdated.as_str(),
+            "chat.member.updated"
         );
         assert_eq!(
             WorkspaceAuditAction::ChatSubscribed.as_str(),
@@ -750,6 +1063,10 @@ mod tests {
         assert_eq!(
             WorkspaceAuditAction::TaskLabelDeleted.as_str(),
             "task_label.deleted"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::TaskLabelEdited.as_str(),
+            "task_label.edited"
         );
         assert_eq!(
             WorkspaceAuditAction::TaskLabelAssigned.as_str(),
@@ -807,6 +1124,82 @@ mod tests {
             WorkspaceAuditAction::MessageFileDetached.as_str(),
             "message.file.detached"
         );
+        assert_eq!(
+            WorkspaceAuditAction::MessageReactionAdded.as_str(),
+            "message.reaction.added"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::MessageReactionRemoved.as_str(),
+            "message.reaction.removed"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::MessageMentionCreated.as_str(),
+            "message.mention.created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageCreated.as_str(),
+            "doc_page.created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageUpdated.as_str(),
+            "doc_page.updated"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageDeleted.as_str(),
+            "doc_page.deleted"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocBlockCreated.as_str(),
+            "doc_block.created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocBlockUpdated.as_str(),
+            "doc_block.updated"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocBlockDeleted.as_str(),
+            "doc_block.deleted"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageVersionCreated.as_str(),
+            "doc_page.version_created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageDuplicated.as_str(),
+            "doc_page.duplicated"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageVersionRestored.as_str(),
+            "doc_page.version_restored"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::DocPageMentionAdded.as_str(),
+            "doc_page.mention_added"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::SessionRevoked.as_str(),
+            "session.revoked"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::SessionsAllRevoked.as_str(),
+            "session.all_revoked"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ApiKeyCreated.as_str(),
+            "api_key.created"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ApiKeyRevoked.as_str(),
+            "api_key.revoked"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::ApiKeyUpdated.as_str(),
+            "api_key.updated"
+        );
+        assert_eq!(
+            WorkspaceAuditAction::PasswordChanged.as_str(),
+            "password.changed"
+        );
     }
 
     #[test]
@@ -824,6 +1217,8 @@ mod tests {
             WorkspaceAuditAction::MessageEdited.as_str(),
             WorkspaceAuditAction::MessageDeleted.as_str(),
             WorkspaceAuditAction::ThreadCreated.as_str(),
+            WorkspaceAuditAction::ThreadUpdated.as_str(),
+            WorkspaceAuditAction::ThreadReplied.as_str(),
             WorkspaceAuditAction::MemoryCreated.as_str(),
             WorkspaceAuditAction::MemoryDeleted.as_str(),
             WorkspaceAuditAction::MemoryPinned.as_str(),
@@ -835,16 +1230,19 @@ mod tests {
             WorkspaceAuditAction::TaskListArchived.as_str(),
             WorkspaceAuditAction::TaskCommentCreated.as_str(),
             WorkspaceAuditAction::TaskCommentDeleted.as_str(),
+            WorkspaceAuditAction::TaskCommentEdited.as_str(),
             WorkspaceAuditAction::ChatUpdated.as_str(),
             WorkspaceAuditAction::ChatArchived.as_str(),
             WorkspaceAuditAction::ChatMemberAdded.as_str(),
             WorkspaceAuditAction::ChatMemberRemoved.as_str(),
+            WorkspaceAuditAction::ChatMemberUpdated.as_str(),
             WorkspaceAuditAction::ChatSubscribed.as_str(),
             WorkspaceAuditAction::ChatUnsubscribed.as_str(),
             WorkspaceAuditAction::TaskAssigneeAdded.as_str(),
             WorkspaceAuditAction::TaskAssigneeRemoved.as_str(),
             WorkspaceAuditAction::TaskLabelCreated.as_str(),
             WorkspaceAuditAction::TaskLabelDeleted.as_str(),
+            WorkspaceAuditAction::TaskLabelEdited.as_str(),
             WorkspaceAuditAction::TaskLabelAssigned.as_str(),
             WorkspaceAuditAction::TaskLabelRemoved.as_str(),
             WorkspaceAuditAction::TaskSubscribed.as_str(),
@@ -856,10 +1254,33 @@ mod tests {
             WorkspaceAuditAction::FileDownloadIssued.as_str(),
             WorkspaceAuditAction::FileVersionCreated.as_str(),
             WorkspaceAuditAction::FileVersionsListed.as_str(),
+            WorkspaceAuditAction::FileVersionRead.as_str(),
             WorkspaceAuditAction::TaskFileAttached.as_str(),
             WorkspaceAuditAction::TaskFileDetached.as_str(),
             WorkspaceAuditAction::MessageFileAttached.as_str(),
             WorkspaceAuditAction::MessageFileDetached.as_str(),
+            WorkspaceAuditAction::MessageReactionAdded.as_str(),
+            WorkspaceAuditAction::MessageReactionRemoved.as_str(),
+            WorkspaceAuditAction::MessageMentionCreated.as_str(),
+            WorkspaceAuditAction::DocPageCreated.as_str(),
+            WorkspaceAuditAction::DocPageUpdated.as_str(),
+            WorkspaceAuditAction::DocPageDeleted.as_str(),
+            WorkspaceAuditAction::DocBlockCreated.as_str(),
+            WorkspaceAuditAction::DocBlockUpdated.as_str(),
+            WorkspaceAuditAction::DocBlockDeleted.as_str(),
+            WorkspaceAuditAction::DocPageVersionCreated.as_str(),
+            WorkspaceAuditAction::DocPageDuplicated.as_str(),
+            WorkspaceAuditAction::DocPageVersionRestored.as_str(),
+            WorkspaceAuditAction::DocPageMentionAdded.as_str(),
+            WorkspaceAuditAction::SessionRevoked.as_str(),
+            WorkspaceAuditAction::SessionsAllRevoked.as_str(),
+            WorkspaceAuditAction::ApiKeyCreated.as_str(),
+            WorkspaceAuditAction::ApiKeyRevoked.as_str(),
+            WorkspaceAuditAction::ApiKeyUpdated.as_str(),
+            WorkspaceAuditAction::PasswordChanged.as_str(),
+            WorkspaceAuditAction::AccountSelfDeleted.as_str(),
+            WorkspaceAuditAction::AccountDataExported.as_str(),
+            WorkspaceAuditAction::AccountAnonymized.as_str(),
         ];
         let unique: std::collections::HashSet<_> = strings.iter().collect();
         assert_eq!(unique.len(), strings.len(), "duplicate action strings");

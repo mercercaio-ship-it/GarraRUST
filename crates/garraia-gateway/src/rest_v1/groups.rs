@@ -436,12 +436,14 @@ pub async fn get_group(
         .await
         .map_err(|e| RestError::Internal(e.into()))?;
 
-    let row: Option<(Uuid, String, String, DateTime<Utc>, Uuid)> =
-        sqlx::query_as("SELECT id, name, type, created_at, created_by FROM groups WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| RestError::Internal(e.into()))?;
+    let row: Option<(Uuid, String, String, DateTime<Utc>, Uuid)> = sqlx::query_as(
+        "SELECT id, name, type, created_at, created_by FROM groups \
+             WHERE id = $1 AND archived_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
 
     let (id, name, group_type, created_at, created_by) = row.ok_or(RestError::NotFound)?;
 
@@ -615,7 +617,7 @@ pub async fn patch_group(
            SET name       = COALESCE($1, name),
                type       = COALESCE($2, type),
                updated_at = now()
-         WHERE id = $3
+         WHERE id = $3 AND archived_at IS NULL
      RETURNING id, name, type, created_at, created_by
         "#,
     )
@@ -640,6 +642,135 @@ pub async fn patch_group(
         created_by,
         role,
     }))
+}
+
+/// `DELETE /v1/groups/{id}` — soft-delete (archive) a group (plan 0346 / GAR-890).
+///
+/// Sets `groups.archived_at = now()`. The group's data (chats, files, tasks, docs,
+/// memory) is NOT deleted; it is preserved for LGPD/GDPR retention compliance.
+/// Hard deletion is deferred to the Fase 5.3 retention worker.
+///
+/// **Idempotent**: a second call on an already-archived group returns 204 without
+/// error and without re-emitting an audit event.
+///
+/// After archival:
+/// - `GET /v1/groups/{id}` returns 404.
+/// - `GET /v1/groups` excludes the group.
+/// - `PATCH /v1/groups/{id}` returns 404.
+///
+/// ## Error matrix
+///
+/// | Condition                              | Status | Guard           |
+/// |----------------------------------------|--------|-----------------|
+/// | Missing/invalid JWT                    | 401    | Principal ext.  |
+/// | Non-member of target group             | 403    | Principal ext.  |
+/// | X-Group-Id / path id mismatch         | 400    | this handler    |
+/// | Role is Admin/Member/Guest/Child       | 403    | `can()`         |
+/// | Group not found / cross-tenant         | 404    | SELECT check    |
+/// | Happy path (including re-archive)      | 204    |                 |
+#[utoipa::path(
+    delete,
+    path = "/v1/groups/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Group UUID. Must match the `X-Group-Id` header."),
+    ),
+    responses(
+        (status = 204, description = "Group archived (or already archived — idempotent)."),
+        (status = 400, description = "X-Group-Id header missing or mismatched.", body = super::problem::ProblemDetails),
+        (status = 401, description = "Missing or invalid JWT.", body = super::problem::ProblemDetails),
+        (status = 403, description = "Caller lacks `group.delete` capability (Owner-only).", body = super::problem::ProblemDetails),
+        (status = 404, description = "Group not found or cross-tenant.", body = super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn delete_group(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, RestError> {
+    // 1. Header/path coherence (same pattern as get_group / patch_group).
+    match principal.group_id {
+        Some(hdr) if hdr == id => {}
+        Some(_) => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header and path id must match".into(),
+            ));
+        }
+        None => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header is required".into(),
+            ));
+        }
+    }
+
+    // 2. Capability check — Owner-only (Admin lacks GroupDelete per can.rs:34).
+    if !can(&principal, Action::GroupDelete) {
+        return Err(RestError::Forbidden);
+    }
+
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    // 3. SET LOCAL tenant context. Migration 018 (GAR-589) added FORCE RLS on
+    //    `groups`; both user_id and group_id are required.
+    sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
+        .bind(principal.user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_group_id', $1, true)")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    // 4. Fetch current archived_at + name (for audit name_len).
+    //    Fetch including already-archived rows so we can distinguish
+    //    "group doesn't exist / cross-tenant" (→ 404) from
+    //    "already archived" (→ idempotent 204 without re-emitting audit).
+    let existing: Option<(bool, String)> =
+        sqlx::query_as("SELECT archived_at IS NOT NULL, name FROM groups WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| RestError::Internal(e.into()))?;
+
+    let (already_archived, name) = match existing {
+        None => return Err(RestError::NotFound),
+        Some(r) => r,
+    };
+
+    if !already_archived {
+        let name_len = name.chars().count();
+
+        sqlx::query("UPDATE groups SET archived_at = now() WHERE id = $1 AND archived_at IS NULL")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| RestError::Internal(e.into()))?;
+
+        audit_workspace_event(
+            &mut tx,
+            WorkspaceAuditAction::GroupArchived,
+            principal.user_id,
+            id,
+            "groups",
+            id.to_string(),
+            json!({ "name_len": name_len }),
+        )
+        .await
+        .map_err(|e| RestError::Internal(anyhow::anyhow!(e)))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /v1/groups/{id}/invites` — create a pending invite.
@@ -1599,6 +1730,102 @@ pub async fn list_members(
     Ok(Json(ListMembersResponse { items, next_cursor }))
 }
 
+/// `GET /v1/groups/{id}/members/{user_id}` — fetch a single group member by user UUID (plan 0286, GAR-823).
+///
+/// Any active member of the group can fetch another member's summary. Fields returned
+/// (`user_id`, `role`, `status`, `joined_at`, `invited_by`) are non-PII, so no extra
+/// capability gate is applied — FORCE RLS on `group_members` (migration 018) already
+/// ensures callers from a different group receive 0 rows (surfaced as 404).
+#[utoipa::path(
+    get,
+    path = "/v1/groups/{id}/members/{user_id}",
+    params(
+        ("id" = Uuid, Path, description = "Group UUID."),
+        ("user_id" = Uuid, Path, description = "Target member's user UUID."),
+    ),
+    responses(
+        (status = 200, description = "Member found.", body = MemberSummary),
+        (status = 400, description = "Missing or mismatched X-Group-Id header.", body = super::problem::ProblemDetails),
+        (status = 401, description = "Missing or invalid JWT.", body = super::problem::ProblemDetails),
+        (status = 404, description = "Member not found or belongs to a different group.", body = super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn get_member(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((id, target_user_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<MemberSummary>, RestError> {
+    // 1. Path/header coherence.
+    match principal.group_id {
+        Some(hdr) if hdr == id => {}
+        Some(_) => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header and path id must match".into(),
+            ));
+        }
+        None => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header is required".into(),
+            ));
+        }
+    }
+
+    // 2. Open tx + SET LOCAL tenant context (both load-bearing for FORCE RLS on group_members).
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
+        .bind(principal.user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_group_id', $1, true)")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    // 3. Fetch single member row. 0 rows → 404 (no existence leak for cross-group).
+    #[derive(sqlx::FromRow)]
+    struct MemberRow {
+        user_id: Uuid,
+        role: String,
+        status: String,
+        joined_at: DateTime<Utc>,
+        invited_by: Option<Uuid>,
+    }
+
+    let row: Option<MemberRow> = sqlx::query_as(
+        "SELECT user_id, role, status, joined_at, invited_by \
+         FROM group_members \
+         WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(target_user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    let r = row.ok_or(RestError::NotFound)?;
+
+    Ok(Json(MemberSummary {
+        user_id: r.user_id,
+        role: r.role,
+        status: r.status,
+        joined_at: r.joined_at,
+        invited_by: r.invited_by,
+    }))
+}
+
 /// `GET /v1/groups/{id}/invites` — cursor-paginated list of pending group invites (plan 0097, GAR-574).
 ///
 /// Requires `Action::MembersManage` (owner/admin) because `invited_email` is PII.
@@ -1685,7 +1912,7 @@ pub async fn list_invites(
         sqlx::query_as(
             "SELECT id, invited_email, proposed_role, expires_at, created_by, created_at \
              FROM group_invites \
-             WHERE group_id = $1 AND accepted_at IS NULL \
+             WHERE group_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL \
                AND (created_at, id) > (\
                    SELECT created_at, id FROM group_invites WHERE id = $2\
                ) \
@@ -1700,7 +1927,7 @@ pub async fn list_invites(
         sqlx::query_as(
             "SELECT id, invited_email, proposed_role, expires_at, created_by, created_at \
              FROM group_invites \
-             WHERE group_id = $1 AND accepted_at IS NULL \
+             WHERE group_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL \
              ORDER BY created_at ASC, id ASC LIMIT $2",
         )
         .bind(id)
@@ -1736,6 +1963,215 @@ pub async fn list_invites(
         .collect();
 
     Ok(Json(ListInvitesResponse { items, next_cursor }))
+}
+
+// ─── Handlers: get_invite / revoke_invite ─────────────────────────────────────
+
+/// `GET /v1/groups/{id}/invites/{invite_id}` — fetch a single pending invite (plan 0257, GAR-780).
+///
+/// Returns the `InviteSummary` for one pending (not accepted, not revoked,
+/// not expired) invite. The invite must belong to the group in the path.
+/// Requires `Action::MembersManage`.
+#[utoipa::path(
+    get,
+    path = "/v1/groups/{id}/invites/{invite_id}",
+    params(
+        ("id" = Uuid, Path, description = "Group UUID."),
+        ("invite_id" = Uuid, Path, description = "Invite UUID."),
+    ),
+    responses(
+        (status = 200, description = "Pending invite detail.", body = InviteSummary),
+        (status = 400, description = "Missing or mismatched X-Group-Id header.", body = super::problem::ProblemDetails),
+        (status = 401, description = "Missing or invalid JWT.", body = super::problem::ProblemDetails),
+        (status = 403, description = "Caller lacks `members.manage` capability.", body = super::problem::ProblemDetails),
+        (status = 404, description = "Invite not found, already accepted, or revoked.", body = super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn get_invite(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((id, invite_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<InviteSummary>, RestError> {
+    // 1. Path/header coherence.
+    match principal.group_id {
+        Some(hdr) if hdr == id => {}
+        Some(_) => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header and path id must match".into(),
+            ));
+        }
+        None => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header is required".into(),
+            ));
+        }
+    }
+
+    // 2. Capability check — email is PII, owner/admin only.
+    if !can(&principal, Action::MembersManage) {
+        return Err(RestError::Forbidden);
+    }
+
+    // 3. Open tx + SET LOCAL.
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
+        .bind(principal.user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    // 4. Fetch single pending invite. token_hash deliberately excluded.
+    #[derive(sqlx::FromRow)]
+    struct InviteRow {
+        id: Uuid,
+        invited_email: String,
+        proposed_role: String,
+        expires_at: DateTime<Utc>,
+        created_by: Uuid,
+        created_at: DateTime<Utc>,
+    }
+
+    let row: Option<InviteRow> = sqlx::query_as(
+        "SELECT id, invited_email, proposed_role, expires_at, created_by, created_at \
+         FROM group_invites \
+         WHERE id = $1 AND group_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL",
+    )
+    .bind(invite_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    let r = row.ok_or(RestError::NotFound)?;
+
+    Ok(Json(InviteSummary {
+        id: r.id,
+        invited_email: r.invited_email,
+        proposed_role: r.proposed_role,
+        expires_at: r.expires_at,
+        created_by: r.created_by,
+        created_at: r.created_at,
+    }))
+}
+
+/// `DELETE /v1/groups/{id}/invites/{invite_id}` — revoke a pending invite (plan 0257, GAR-780).
+///
+/// Sets `revoked_at = now()` and `revoked_by = caller_id` on the invite row.
+/// Returns 204 No Content on success. Returns 404 if the invite does not exist,
+/// belongs to a different group, has already been accepted, or was already revoked.
+/// Requires `Action::MembersManage`.
+#[utoipa::path(
+    delete,
+    path = "/v1/groups/{id}/invites/{invite_id}",
+    params(
+        ("id" = Uuid, Path, description = "Group UUID."),
+        ("invite_id" = Uuid, Path, description = "Invite UUID."),
+    ),
+    responses(
+        (status = 204, description = "Invite revoked."),
+        (status = 400, description = "Missing or mismatched X-Group-Id header.", body = super::problem::ProblemDetails),
+        (status = 401, description = "Missing or invalid JWT.", body = super::problem::ProblemDetails),
+        (status = 403, description = "Caller lacks `members.manage` capability.", body = super::problem::ProblemDetails),
+        (status = 404, description = "Invite not found, already accepted, or already revoked.", body = super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn revoke_invite(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((id, invite_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, RestError> {
+    // 1. Path/header coherence.
+    match principal.group_id {
+        Some(hdr) if hdr == id => {}
+        Some(_) => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header and path id must match".into(),
+            ));
+        }
+        None => {
+            return Err(RestError::BadRequest(
+                "X-Group-Id header is required".into(),
+            ));
+        }
+    }
+
+    // 2. Capability check.
+    if !can(&principal, Action::MembersManage) {
+        return Err(RestError::Forbidden);
+    }
+
+    // 3. Open tx + SET LOCAL both user_id and group_id (group_id is
+    //    required for the audit_events FORCE-RLS INSERT).
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_user_id', $1, true)")
+        .bind(principal.user_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    sqlx::query("SELECT set_config('app.current_group_id', $1, true)")
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    // 4. Soft-revoke: set revoked_at + revoked_by.
+    //    WHERE guards: must belong to the group, not accepted, not already revoked.
+    //    rows_affected == 0 → 404 (not found, wrong group, accepted, or already revoked).
+    #[derive(sqlx::FromRow)]
+    struct RevokedRow {
+        proposed_role: String,
+    }
+
+    let revoked: Option<RevokedRow> = sqlx::query_as(
+        "UPDATE group_invites \
+         SET revoked_at = now(), revoked_by = $1 \
+         WHERE id = $2 AND group_id = $3 AND accepted_at IS NULL AND revoked_at IS NULL AND declined_at IS NULL \
+         RETURNING proposed_role",
+    )
+    .bind(principal.user_id)
+    .bind(invite_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    let row = revoked.ok_or(RestError::NotFound)?;
+
+    // 5. Emit audit event. Metadata: proposed_role only (invited_email is PII).
+    audit_workspace_event(
+        &mut tx,
+        WorkspaceAuditAction::InviteRevoked,
+        principal.user_id,
+        id,
+        "group_invites",
+        invite_id.to_string(),
+        json!({ "proposed_role": row.proposed_role }),
+    )
+    .await
+    .map_err(|e| RestError::Internal(anyhow::anyhow!("{e}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ─── DTOs: list_groups ────────────────────────────────────────────────────────
@@ -1851,6 +2287,7 @@ pub async fn list_groups(
                  FROM group_members gm \
                  JOIN groups g ON g.id = gm.group_id \
                  WHERE gm.user_id = $1 AND gm.status = 'active' \
+                   AND g.archived_at IS NULL \
                    AND gm.group_id > $2 AND gm.role = $3 \
                  ORDER BY gm.group_id ASC LIMIT $4",
         )
@@ -1867,6 +2304,7 @@ pub async fn list_groups(
                  FROM group_members gm \
                  JOIN groups g ON g.id = gm.group_id \
                  WHERE gm.user_id = $1 AND gm.status = 'active' \
+                   AND g.archived_at IS NULL \
                    AND gm.group_id > $2 \
                  ORDER BY gm.group_id ASC LIMIT $3",
         )
@@ -1882,6 +2320,7 @@ pub async fn list_groups(
                  FROM group_members gm \
                  JOIN groups g ON g.id = gm.group_id \
                  WHERE gm.user_id = $1 AND gm.status = 'active' \
+                   AND g.archived_at IS NULL \
                    AND gm.role = $2 \
                  ORDER BY gm.group_id ASC LIMIT $3",
         )
@@ -1897,6 +2336,7 @@ pub async fn list_groups(
                  FROM group_members gm \
                  JOIN groups g ON g.id = gm.group_id \
                  WHERE gm.user_id = $1 AND gm.status = 'active' \
+                   AND g.archived_at IS NULL \
                  ORDER BY gm.group_id ASC LIMIT $2",
         )
         .bind(principal.user_id)
@@ -2191,5 +2631,265 @@ mod tests {
         // re-evaluate the plan 0020 design invariants §6 and the
         // hierarchy model before accepting the divergence.
         assert_eq!(ALLOWED_SETROLE_VALUES, ALLOWED_INVITE_ROLES);
+    }
+
+    // ── InviteSummary / get_invite / revoke_invite (plan 0257, GAR-780) ────
+
+    #[test]
+    fn invite_summary_serializes_all_fields() {
+        let id = Uuid::nil();
+        let created_by = Uuid::nil();
+        let now = chrono::Utc::now();
+        let summary = InviteSummary {
+            id,
+            invited_email: "alice@example.com".into(),
+            proposed_role: "member".into(),
+            expires_at: now,
+            created_by,
+            created_at: now,
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(v["id"], id.to_string());
+        assert_eq!(v["invited_email"], "alice@example.com");
+        assert_eq!(v["proposed_role"], "member");
+        assert!(
+            v.get("token_hash").is_none(),
+            "token_hash must not be serialized"
+        );
+    }
+
+    #[test]
+    fn list_invites_response_empty_has_no_next_cursor() {
+        let resp = ListInvitesResponse {
+            items: vec![],
+            next_cursor: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["items"].as_array().unwrap().len(), 0);
+        assert!(v["next_cursor"].is_null());
+    }
+
+    #[test]
+    fn list_invites_response_with_cursor_serializes() {
+        let cursor_id = Uuid::new_v4();
+        let resp = ListInvitesResponse {
+            items: vec![],
+            next_cursor: Some(cursor_id),
+        };
+        let v: serde_json::Value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["next_cursor"], cursor_id.to_string());
+    }
+
+    #[test]
+    fn invite_summary_proposed_role_reflects_original() {
+        let now = chrono::Utc::now();
+        for role in &["admin", "member", "guest", "child"] {
+            let summary = InviteSummary {
+                id: Uuid::nil(),
+                invited_email: "x@y.com".into(),
+                proposed_role: role.to_string(),
+                expires_at: now,
+                created_by: Uuid::nil(),
+                created_at: now,
+            };
+            let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+            assert_eq!(v["proposed_role"], *role);
+        }
+    }
+
+    #[test]
+    fn invite_summary_does_not_expose_revoked_at() {
+        let now = chrono::Utc::now();
+        let summary = InviteSummary {
+            id: Uuid::nil(),
+            invited_email: "bob@example.com".into(),
+            proposed_role: "guest".into(),
+            expires_at: now,
+            created_by: Uuid::nil(),
+            created_at: now,
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert!(
+            v.get("revoked_at").is_none(),
+            "revoked_at must not leak into summary response"
+        );
+    }
+
+    // ── MemberSummary / get_member (plan 0286, GAR-823) ────────────────────
+
+    #[test]
+    fn member_summary_serializes_all_fields() {
+        let user_id = Uuid::new_v4();
+        let invited_by = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        let summary = MemberSummary {
+            user_id,
+            role: "member".into(),
+            status: "active".into(),
+            joined_at: now,
+            invited_by: Some(invited_by),
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(v["user_id"], user_id.to_string());
+        assert_eq!(v["role"], "member");
+        assert_eq!(v["status"], "active");
+        assert_eq!(v["invited_by"], invited_by.to_string());
+    }
+
+    #[test]
+    fn member_summary_nil_invited_by_serializes_as_null() {
+        let now = chrono::Utc::now();
+        let summary = MemberSummary {
+            user_id: Uuid::nil(),
+            role: "owner".into(),
+            status: "active".into(),
+            joined_at: now,
+            invited_by: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert!(v["invited_by"].is_null());
+    }
+
+    #[test]
+    fn member_summary_joined_at_is_utc_iso8601_z() {
+        let now = chrono::Utc::now();
+        let summary = MemberSummary {
+            user_id: Uuid::nil(),
+            role: "admin".into(),
+            status: "active".into(),
+            joined_at: now,
+            invited_by: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        let joined_str = v["joined_at"].as_str().unwrap();
+        assert!(
+            joined_str.ends_with('Z'),
+            "joined_at must be UTC ISO-8601 with Z suffix, got: {joined_str}"
+        );
+    }
+
+    #[test]
+    fn member_summary_nil_uuid_round_trips() {
+        let now = chrono::Utc::now();
+        let summary = MemberSummary {
+            user_id: Uuid::nil(),
+            role: "guest".into(),
+            status: "active".into(),
+            joined_at: now,
+            invited_by: Some(Uuid::nil()),
+        };
+        let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(v["user_id"], "00000000-0000-0000-0000-000000000000");
+        assert_eq!(v["invited_by"], "00000000-0000-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn member_summary_role_variants_serialize() {
+        let now = chrono::Utc::now();
+        for role in &["owner", "admin", "member", "guest", "child"] {
+            let summary = MemberSummary {
+                user_id: Uuid::nil(),
+                role: role.to_string(),
+                status: "active".into(),
+                joined_at: now,
+                invited_by: None,
+            };
+            let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+            assert_eq!(v["role"], *role, "role {role} did not round-trip");
+        }
+    }
+
+    #[test]
+    fn member_summary_status_variants_serialize() {
+        let now = chrono::Utc::now();
+        for status in &["active", "invited", "removed", "banned"] {
+            let summary = MemberSummary {
+                user_id: Uuid::nil(),
+                role: "member".into(),
+                status: status.to_string(),
+                joined_at: now,
+                invited_by: None,
+            };
+            let v: serde_json::Value = serde_json::to_value(&summary).unwrap();
+            assert_eq!(v["status"], *status, "status {status} did not round-trip");
+        }
+    }
+
+    // ── delete_group (plan 0346 / GAR-890) ──────────────────────────────────
+
+    #[test]
+    fn group_response_serializes_with_type_field_rename() {
+        let resp = GroupResponse {
+            id: Uuid::nil(),
+            name: "My Family".into(),
+            group_type: "family".into(),
+            created_at: chrono::Utc::now(),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["type"], "family");
+        assert!(
+            v.get("group_type").is_none(),
+            "group_type must be serialized as 'type'"
+        );
+    }
+
+    #[test]
+    fn group_read_response_includes_archived_at_none_by_default() {
+        let resp = GroupReadResponse {
+            id: Uuid::nil(),
+            name: "Test Group".into(),
+            group_type: "team".into(),
+            created_at: chrono::Utc::now(),
+            created_by: Uuid::nil(),
+            role: "owner".into(),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        // GroupReadResponse does not expose archived_at to clients —
+        // archived groups return 404 before this point.
+        assert_eq!(v["role"], "owner");
+        assert_eq!(v["type"], "team");
+    }
+
+    #[test]
+    fn allowed_group_types_exclude_personal_for_delete_guard() {
+        // personal type is reserved (migration 001); the API must never
+        // expose it as user-selectable — same rule applies for delete_group:
+        // callers using "personal" groups were created by the migration tool,
+        // not via the API, and delete_group still applies the same RBAC check.
+        assert!(!ALLOWED_GROUP_TYPES.contains(&"personal"));
+    }
+
+    #[test]
+    fn group_archived_audit_action_string() {
+        assert_eq!(
+            WorkspaceAuditAction::GroupArchived.as_str(),
+            "group.archived"
+        );
+    }
+
+    #[test]
+    fn group_archived_audit_action_display() {
+        let action = WorkspaceAuditAction::GroupArchived;
+        assert_eq!(format!("{action}"), "group.archived");
+    }
+
+    #[test]
+    fn group_list_item_serializes_joined_at() {
+        let now = chrono::Utc::now();
+        let item = GroupListItem {
+            id: Uuid::nil(),
+            name: "Family".into(),
+            group_type: "family".into(),
+            created_at: now,
+            created_by: Uuid::nil(),
+            role: "owner".into(),
+            joined_at: now,
+        };
+        let v = serde_json::to_value(&item).unwrap();
+        assert!(
+            v.get("joined_at").is_some(),
+            "joined_at must be present in list response"
+        );
+        assert_eq!(v["type"], "family");
     }
 }

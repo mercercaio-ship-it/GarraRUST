@@ -5,9 +5,134 @@ Status operacional do backlog do GarraIA/GarraRUST. Este arquivo complementa
 foi concluído, o que ficou parcial ou adiado, decisões tomadas e próximos passos
 curtos para a próxima sessão autônoma.
 
-**Atualizado:** 2026-05-26 (America/New_York)
+**Atualizado:** 2026-06-10 (America/New_York)
 
 ## Concluído nesta sessão
+
+- GAR-835 / plan 0297 — Docs Tier 2 scaffold: migration 026 + POST/GET /v1/groups/{group_id}/doc-pages:
+  - Migration `026_doc_pages.sql`: `doc_pages` table with FORCE RLS, NULLIF fail-closed group
+    isolation policy, `GRANT SELECT/INSERT/UPDATE` to `garraia_app`, keyset + parent indexes.
+  - `WorkspaceAuditAction::DocPageCreated` → `"doc_page.created"` added to `garraia-auth`.
+  - `docs.rs`: `CreateDocPageRequest`, `DocPageResponse`, `DocPageSummary`, `ListDocPagesResponse`,
+    `ListDocPagesQuery`; `create_doc_page` (POST 201, authz DocsWrite) and `list_doc_pages`
+    (GET, cursor-keyset, optional `parent_page_id` filter, authz DocsRead); 6 unit tests pass.
+  - Routes wired in all 3 `mod.rs` branches (full / auth-stub / no-auth stub).
+  - `openapi.rs`: paths + schemas registered.
+  - ROADMAP §3.8 Tier 2: `doc_pages` schema + 2 API endpoints marked ✅.
+  - PR #706 squash-merged 2026-06-10 (`54f88bc`) — 20/20 CI green.
+  - GAR-835 → Done in Linear.
+
+## Concluído em sessões anteriores
+
+- GAR-806 / plan 0269 — GET /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}:
+  - `get_task_comment` handler in `comments.rs`: validates group_id, TasksRead check,
+    SET LOCAL both RLS configs, single query (`task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL`),
+    returns `CommentResponse`; 404 for deleted/cross-group/unknown (no existence leak).
+  - Route wired as `get(tasks::get_task_comment)` alongside delete+patch in all 3 `mod.rs` branches.
+  - `super::tasks::comments::get_task_comment` added to `openapi.rs` paths list.
+  - ROADMAP §3.8 and §3.4 updated with GET single task-label (GAR-802) and GET single comment (GAR-806).
+  - 6 unit tests: serializes all fields, nil author_user_id → null, nil edited_at → null,
+    edited_at UTC ISO-8601 Z, nil UUID round-trip, task_id preserved.
+  - `cargo clippy --workspace` clean (0 warnings). 12 total comments tests pass.
+  - Branch: `routine/202506061830-get-task-comment`.
+
+
+- GAR-800 / plan 0266 — PATCH /v1/groups/{group_id}/task-labels/{label_id}:
+  - `PatchTaskLabelRequest { name, color }` + `patch_task_label` handler in `labels.rs`.
+  - COALESCE UPDATE (at least one field required → 400, 404 on 0 rows, 409 on duplicate name).
+  - `WorkspaceAuditAction::TaskLabelEdited` added to `audit_workspace.rs` (PII-safe).
+  - Routes wired in all 3 `mod.rs` branches (full / auth-only stub / no-auth stub).
+  - OpenAPI: `super::tasks::labels::patch_task_label` path + `PatchTaskLabelRequest` schema.
+  - 6 unit tests: name-only / color-only / both-absent roundtrip, hex valid/invalid, response nil-UUID.
+  - `cargo clippy --workspace` clean; 634 unit tests pass. Branch: `routine/202506060020-task-label-patch`.
+  - PR pending CI.
+
+- GAR-798 / plan 0265 — GET /v1/threads/{thread_id}:
+  - `get_thread` handler in `chats.rs` (before `patch_thread`): validates group_id, ChatsRead check,
+    SET LOCAL both RLS configs, single JOIN query (`message_threads JOIN chats WHERE group_id = $2`),
+    returns `ThreadDetailResponse`; 404 for cross-group or unknown threads (no existence leak).
+  - Route wired as `get(chats::get_thread).patch(chats::patch_thread)` in all 3 `mod.rs` branches.
+  - `super::chats::get_thread` added to `openapi.rs` paths list.
+  - Removed now-unused standalone `patch` import from `mod.rs`.
+  - 6 unit tests: serializes all fields, nil title → null, nil created_by → null,
+    unresolved → null resolved_at, resolved → UTC ISO-8601 Z timestamp, nil UUID round-trip.
+  - `cargo clippy --workspace` clean (0 warnings). Branch: `routine/202506051820-get-thread`.
+  - PR pending CI.
+
+- PR #643 (docs/mark-plan-0263-merged) — merged (20/20 CI green); GAR-794 → Done in Linear.
+
+- GAR-795 / plan 0264 — PATCH /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}:
+  - `TaskCommentEdited` variant added to `WorkspaceAuditAction` in `garraia-auth`.
+  - `EditCommentRequest` + `EditedCommentResponse` types in `comments.rs`.
+  - `patch_task_comment` handler: sender-only (404 for other authors), body_md 1-50k validated,
+    `edited_at = now()` in same UPDATE, audit `body_len` only (no PII).
+  - Route wired in all 3 `mod.rs` branches; OpenAPI path + components registered.
+  - 6 unit tests pass. `cargo clippy --workspace` green (622+6 tests, 0 warnings).
+  - Closes CRUD gap: POST/GET/DELETE were GAR-520; PATCH was missing.
+  - Squash-merged PR #644 (`6974812`) 2026-06-05 — 20/20 CI green.
+  - GAR-795 → Done in Linear.
+
+- GAR-794 / plan 0263 — POST /v1/me/invites/{invite_id}/accept:
+  - `accept_my_invite` handler in `me.rs`: UUID-based authenticated accept.
+  - Atomic tx: UPDATE group_invites (with all terminal guards in WHERE) + INSERT group_members + audit InviteAccepted.
+  - 410 (expired) distinguished from 404 via follow-up SELECT when UPDATE returns None.
+  - 409 (already member) via SQLSTATE 23505 on group_members INSERT.
+  - Route registered in all 3 mod.rs branches; OpenAPI path + AcceptMyInviteResponse schema registered.
+  - 6 unit tests covering: serialization, no-PII fields, role variants, nil UUID round-trip, PendingInviteSummary excludes accepted_at, exactly-3-fields shape.
+  - Completes the invite lifecycle: list (GAR-777) → accept (GAR-794) / decline (GAR-783); token-based accept (plan 0019) unchanged.
+
+## Concluído em sessões anteriores
+
+- GAR-777 / plan 0255 — GET /v1/me/invites (caller-scoped pending group invites inbox):
+  - Merged PR #621 (`762d63c`) after CI went 20/20 green.
+  - GAR-777 → Done in Linear.
+  - Bookkeeping PR #624 (docs/mark-plan-0255-merged) open, CI running.
+
+- GAR-780 / plan 0257 — GET + DELETE /v1/groups/{id}/invites/{invite_id} (invite revocation):
+  - Migration 024: `revoked_at` + `revoked_by` columns on `group_invites`; recreated partial unique index to exclude revoked rows (enables re-invite after revocation).
+  - `WorkspaceAuditAction::InviteRevoked` variant + `"invite.revoked"` string + test assertion.
+  - `list_invites` WHERE updated: `AND revoked_at IS NULL`.
+  - `get_invite` handler: returns `InviteSummary` (404 if not found/accepted/revoked).
+  - `revoke_invite` handler: `UPDATE SET revoked_at = now()`, emits `InviteRevoked` audit event, 204 No Content (404 if already accepted/revoked).
+  - Routes in all 3 `mod.rs` branches. OpenAPI paths + schemas (`InviteSummary`, `ListInvitesResponse`).
+  - 5 unit tests (serialization, cursor, role round-trip, no `revoked_at` in response).
+  - Squash-merged PR #625 (`46a8658`) 2026-06-03 — 20/20 CI green.
+  - GAR-780 → Done in Linear.
+  - Bookkeeping PR (docs/mark-plan-0257-merged) open.
+
+## Concluído em sessões anteriores
+
+
+- GAR-767 / plan 0246 — GET /v1/me/files (caller-scoped uploaded-files inbox):
+  - `ListMyFilesQuery` struct with `group_id` (required), `after`, `limit`, `folder_id` (optional).
+  - `MyFileSummary` fields: `id`, `group_id`, `name`, `mime_type`, `size_bytes`, `folder_id` (skip_if_none), `created_at`, `updated_at` (skip_if_none).
+  - `MyFilesResponse` with `items` + `next_cursor` (skip_serializing_if None).
+  - 4-branch query (cursor × folder_id filter), keyset on `(files.created_at DESC, files.id DESC)`.
+  - Route `.route("/v1/me/files", get(me::list_my_files))` registered in all 3 `mod.rs` branches.
+  - OpenAPI annotation + component registration in `openapi.rs`.
+  - 8 new unit tests (serialization, limit clamp, folder filter, cursor, large size).
+  - Branch: `routine/202506010015-me-files-inbox`. GAR-767 In Progress → Done pending CI.
+
+- GAR-765 / plan 0245 — GET /v1/me/chats (caller-scoped chat membership inbox):
+  - `ListMyChatsQuery` struct with `group_id` (required), `after`, `limit`, `type` (optional).
+  - `ChatMembershipSummary` fields: `chat_id`, `group_id`, `name`, `type`, `role`, `joined_at`, `muted`, `last_read_at`.
+  - `MyChatsMembershipResponse` with `items` + `next_cursor` (skip_serializing_if None).
+  - 4-branch query (cursor × type filter), keyset on `(cm.joined_at DESC, cm.chat_id DESC)`.
+  - Route `.route("/v1/me/chats", get(me::list_my_chats))` registered in `mod.rs`.
+  - OpenAPI annotation + component registration in `openapi.rs`.
+  - 8 new unit tests (serialization, type filter validation, cursor, muted/last_read_at).
+  - All CI checks expected green (no migration, additive handler only).
+  - Branch: `routine/202605311818-me-chats-inbox`. GAR-765 In Progress → Done.
+
+## Concluído em sessões anteriores
+
+- GAR-733 / plan 0215 — Search slice 14 (`types=groups` group name FTS):
+  - `SearchResultType::Group` variant; `include_groups: bool` in `ValidatedSearch`.
+  - `parse_and_validate`: recognizes `"groups"`, rejects non-user scope with 400.
+  - `GroupSearchRow` struct + `fetch_groups()` async (runtime `to_tsvector('simple', g.name)`).
+  - Handler block: `if validated.include_groups { ... }` mapping to `SearchResult`.
+  - 6 unit tests (scope guards + multi-type combos). No migration needed — FORCE RLS migration 018.
+  - PR #561 squash-merged 2026-05-29 (`1bb2f10`). GAR-733 Done in Linear.
 
 - GAR-705 / plan 0187 — Health run 30: all surfaces clean, priority (i). PR #508 squash-merged (`ef040ad`).
 

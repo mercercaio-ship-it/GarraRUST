@@ -2,11 +2,13 @@
 //!
 //! Extracted from `rest_v1/tasks/mod.rs` by GAR-635 (plan 0138, Q11 slice 4).
 //!
-//! Five endpoints (plan 0078 / GAR-536):
+//! Seven endpoints (plan 0078 / GAR-536 + plan 0267 / GAR-802 + plan 0271 / GAR-808):
 //! - `POST /v1/groups/{group_id}/task-labels` — create a label
 //! - `GET /v1/groups/{group_id}/task-labels` — list labels
+//! - `GET /v1/groups/{group_id}/task-labels/{label_id}` — fetch single label
 //! - `DELETE /v1/groups/{group_id}/task-labels/{label_id}` — delete label (CASCADE)
 //! - `POST /v1/groups/{group_id}/tasks/{task_id}/labels` — assign label to task
+//! - `GET /v1/groups/{group_id}/tasks/{task_id}/labels` — list labels assigned to a task
 //! - `DELETE /v1/groups/{group_id}/tasks/{task_id}/labels/{label_id}` — remove label from task
 
 use axum::Json;
@@ -225,6 +227,63 @@ pub async fn list_task_labels(
     ))
 }
 
+/// `GET /v1/groups/{group_id}/task-labels/{label_id}` — fetch a single task label.
+///
+/// Returns 200 + `TaskLabelResponse` on success. Returns 404 if `label_id` does
+/// not exist or belongs to a different group (cross-group guard, no existence leak).
+/// Authz: `Action::TasksRead`.
+#[utoipa::path(
+    get,
+    path = "/v1/groups/{group_id}/task-labels/{label_id}",
+    params(
+        ("group_id" = Uuid, Path, description = "Group UUID."),
+        ("label_id" = Uuid, Path, description = "Label UUID."),
+    ),
+    responses(
+        (status = 200, description = "Task label.", body = TaskLabelResponse),
+        (status = 401, description = "Missing or invalid JWT.", body = super::super::problem::ProblemDetails),
+        (status = 403, description = "Caller is not a member or group mismatch.", body = super::super::problem::ProblemDetails),
+        (status = 404, description = "Label not found in this group.", body = super::super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn get_task_label(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((path_group_id, label_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<TaskLabelResponse>, RestError> {
+    let group_id = require_group_id(&principal)?;
+    check_group_match(path_group_id, group_id)?;
+    if !can(&principal, Action::TasksRead) {
+        return Err(RestError::Forbidden);
+    }
+
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+    set_rls_context(&mut tx, principal.user_id, group_id).await?;
+
+    let row: Option<TaskLabelRow> = sqlx::query_as(
+        "SELECT id, group_id, name, color, created_by, created_by_label, created_at \
+         FROM task_labels \
+         WHERE id = $1 AND group_id = $2",
+    )
+    .bind(label_id)
+    .bind(group_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    let row = row.ok_or(RestError::NotFound)?;
+    Ok(Json(TaskLabelResponse::from(row)))
+}
+
 /// `DELETE /v1/groups/{group_id}/task-labels/{label_id}` — delete a task label.
 ///
 /// Idempotent: returns 204 whether or not the label existed. The DB CASCADE
@@ -286,6 +345,128 @@ pub async fn delete_task_label(
         .map_err(|e| RestError::Internal(e.into()))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Request body for `PATCH /v1/groups/{group_id}/task-labels/{label_id}`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PatchTaskLabelRequest {
+    /// New label name (1–80 chars). If absent the name is unchanged.
+    pub name: Option<String>,
+    /// New color in `#RRGGBB` format. If absent the color is unchanged.
+    pub color: Option<String>,
+}
+
+/// `PATCH /v1/groups/{group_id}/task-labels/{label_id}` — edit a task label's name/color.
+///
+/// At least one of `name` or `color` must be provided. Returns the updated label
+/// on success. 409 if the new name conflicts with an existing label in this group.
+/// 404 if `label_id` does not exist or belongs to a different group.
+/// Authz: `Action::TasksWrite`.
+#[utoipa::path(
+    patch,
+    path = "/v1/groups/{group_id}/task-labels/{label_id}",
+    params(
+        ("group_id" = Uuid, Path, description = "Group UUID."),
+        ("label_id" = Uuid, Path, description = "Label UUID."),
+    ),
+    request_body = PatchTaskLabelRequest,
+    responses(
+        (status = 200, description = "Label updated.", body = TaskLabelResponse),
+        (status = 400, description = "Validation error or no fields provided.", body = super::super::problem::ProblemDetails),
+        (status = 401, description = "Missing or invalid JWT.", body = super::super::problem::ProblemDetails),
+        (status = 403, description = "Caller is not a member or group mismatch.", body = super::super::problem::ProblemDetails),
+        (status = 404, description = "Label not found in this group.", body = super::super::problem::ProblemDetails),
+        (status = 409, description = "Label name already exists in this group.", body = super::super::problem::ProblemDetails),
+        (status = 422, description = "Invalid color format (expected #RRGGBB).", body = super::super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn patch_task_label(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((path_group_id, label_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<PatchTaskLabelRequest>,
+) -> Result<Json<TaskLabelResponse>, RestError> {
+    let group_id = require_group_id(&principal)?;
+    check_group_match(path_group_id, group_id)?;
+    if !can(&principal, Action::TasksWrite) {
+        return Err(RestError::Forbidden);
+    }
+
+    if body.name.is_none() && body.color.is_none() {
+        return Err(RestError::BadRequest(
+            "at least one of name or color must be provided".into(),
+        ));
+    }
+
+    let name = body.name.as_deref().map(str::trim).map(str::to_string);
+    let color = body.color.as_deref().map(str::trim).map(str::to_string);
+
+    if let Some(ref n) = name
+        && (n.is_empty() || n.len() > 80)
+    {
+        return Err(RestError::BadRequest(
+            "name must be 1\u{2013}80 characters".into(),
+        ));
+    }
+    if let Some(ref c) = color
+        && !is_valid_hex_color(c)
+    {
+        return Err(RestError::BadRequest(
+            "color must be in #RRGGBB format".into(),
+        ));
+    }
+
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+    set_rls_context(&mut tx, principal.user_id, group_id).await?;
+
+    let row: Option<TaskLabelRow> = sqlx::query_as(
+        "UPDATE task_labels \
+         SET name = COALESCE($3, name), color = COALESCE($4, color) \
+         WHERE id = $1 AND group_id = $2 \
+         RETURNING id, group_id, name, color, created_by, created_by_label, created_at",
+    )
+    .bind(label_id)
+    .bind(group_id)
+    .bind(&name)
+    .bind(&color)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e
+            && db_err.code().as_deref() == Some("23505")
+        {
+            return RestError::Conflict("label name already exists in this group".into());
+        }
+        RestError::Internal(e.into())
+    })?;
+
+    let row = row.ok_or(RestError::NotFound)?;
+
+    let name_len = row.name.len();
+    let updated_color = row.color.clone();
+
+    audit_workspace_event(
+        &mut tx,
+        WorkspaceAuditAction::TaskLabelEdited,
+        principal.user_id,
+        group_id,
+        "task_labels",
+        label_id.to_string(),
+        json!({ "name_len": name_len, "color": updated_color }),
+    )
+    .await
+    .map_err(|e| RestError::Internal(anyhow::anyhow!(e)))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    Ok(Json(TaskLabelResponse::from(row)))
 }
 
 /// DB row for a label assignment.
@@ -533,6 +714,108 @@ pub async fn remove_task_label_from_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// DB row for the JOIN between `task_label_assignments` and `task_labels`.
+#[derive(sqlx::FromRow)]
+struct TaskLabelAssignmentRow {
+    id: Uuid,
+    group_id: Uuid,
+    name: String,
+    color: String,
+    created_by: Option<Uuid>,
+    created_by_label: String,
+    created_at: DateTime<Utc>,
+}
+
+impl From<TaskLabelAssignmentRow> for TaskLabelResponse {
+    fn from(r: TaskLabelAssignmentRow) -> Self {
+        Self {
+            id: r.id,
+            group_id: r.group_id,
+            name: r.name,
+            color: r.color,
+            created_by: r.created_by,
+            created_by_label: r.created_by_label,
+            created_at: r.created_at,
+        }
+    }
+}
+
+/// `GET /v1/groups/{group_id}/tasks/{task_id}/labels` — list labels assigned to a task.
+///
+/// Returns 200 + `Vec<TaskLabelResponse>` ordered by `assigned_at ASC`.
+/// Returns an empty array when the task has no labels assigned.
+/// Returns 404 if the task does not exist in this group or has been soft-deleted
+/// (no existence leak for cross-group task_ids).
+/// Authz: `Action::TasksRead`.
+#[utoipa::path(
+    get,
+    path = "/v1/groups/{group_id}/tasks/{task_id}/labels",
+    params(
+        ("group_id" = Uuid, Path, description = "Group UUID."),
+        ("task_id" = Uuid, Path, description = "Task UUID."),
+    ),
+    responses(
+        (status = 200, description = "Labels assigned to the task.", body = Vec<TaskLabelResponse>),
+        (status = 401, description = "Missing or invalid JWT.", body = super::super::problem::ProblemDetails),
+        (status = 403, description = "Caller is not a member or group mismatch.", body = super::super::problem::ProblemDetails),
+        (status = 404, description = "Task not found in this group.", body = super::super::problem::ProblemDetails),
+    ),
+    security(("bearer" = []))
+)]
+pub async fn list_task_label_assignments(
+    State(state): State<RestV1FullState>,
+    principal: Principal,
+    Path((path_group_id, task_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<TaskLabelResponse>>, RestError> {
+    let group_id = require_group_id(&principal)?;
+    check_group_match(path_group_id, group_id)?;
+    if !can(&principal, Action::TasksRead) {
+        return Err(RestError::Forbidden);
+    }
+
+    let pool = state.app_pool.pool_for_handlers();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+    set_rls_context(&mut tx, principal.user_id, group_id).await?;
+
+    // Verify task exists in this group and is not soft-deleted.
+    let task_exists: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM tasks WHERE id = $1 AND group_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(task_id)
+    .bind(group_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    if task_exists.is_none() {
+        return Err(RestError::NotFound);
+    }
+
+    let rows: Vec<TaskLabelAssignmentRow> = sqlx::query_as(
+        "SELECT tl.id, tl.group_id, tl.name, tl.color, \
+                tl.created_by, tl.created_by_label, tl.created_at \
+         FROM task_label_assignments tla \
+         JOIN task_labels tl ON tl.id = tla.label_id \
+         WHERE tla.task_id = $1 \
+         ORDER BY tla.assigned_at ASC",
+    )
+    .bind(task_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| RestError::Internal(e.into()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| RestError::Internal(e.into()))?;
+
+    Ok(Json(
+        rows.into_iter().map(TaskLabelResponse::from).collect(),
+    ))
+}
+
 /// Validates that a color string is in `#RRGGBB` hex format.
 fn is_valid_hex_color(color: &str) -> bool {
     if color.len() != 7 {
@@ -543,4 +826,227 @@ fn is_valid_hex_color(color: &str) -> bool {
         return false;
     }
     bytes[1..].iter().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn patch_request_name_only_roundtrip() {
+        let json = r#"{"name":"urgent"}"#;
+        let req: PatchTaskLabelRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name.as_deref(), Some("urgent"));
+        assert!(req.color.is_none());
+    }
+
+    #[test]
+    fn patch_request_color_only_roundtrip() {
+        let json = r##"{"color":"#FF0000"}"##;
+        let req: PatchTaskLabelRequest = serde_json::from_str(json).unwrap();
+        assert!(req.name.is_none());
+        assert_eq!(req.color.as_deref(), Some("#FF0000"));
+    }
+
+    #[test]
+    fn patch_request_both_absent_roundtrip() {
+        let json = r#"{}"#;
+        let req: PatchTaskLabelRequest = serde_json::from_str(json).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.color.is_none());
+    }
+
+    #[test]
+    fn hex_color_valid_formats() {
+        assert!(is_valid_hex_color("#AABBCC"));
+        assert!(is_valid_hex_color("#000000"));
+        assert!(is_valid_hex_color("#ffffff"));
+        assert!(is_valid_hex_color("#1a2B3c"));
+    }
+
+    #[test]
+    fn hex_color_invalid_formats() {
+        assert!(!is_valid_hex_color("AABBCC"));
+        assert!(!is_valid_hex_color("#AABBCCD"));
+        assert!(!is_valid_hex_color("#AABBC"));
+        assert!(!is_valid_hex_color("#GGHHII"));
+        assert!(!is_valid_hex_color(""));
+    }
+
+    #[test]
+    fn task_label_response_nil_uuid_round_trip() {
+        let resp = TaskLabelResponse {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "test".to_string(),
+            color: "#123456".to_string(),
+            created_by: None,
+            created_by_label: "Alice".to_string(),
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+        };
+        let val = serde_json::to_value(&resp).unwrap();
+        assert_eq!(val["id"], "00000000-0000-0000-0000-000000000000");
+        assert_eq!(val["name"], "test");
+        assert_eq!(val["color"], "#123456");
+        assert!(val.get("created_by").is_some());
+    }
+
+    #[test]
+    fn get_label_response_all_fields_present() {
+        let resp = TaskLabelResponse {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "bug".to_string(),
+            color: "#FF0000".to_string(),
+            created_by: Some(Uuid::nil()),
+            created_by_label: "Bob".to_string(),
+            created_at: DateTime::from_timestamp(1_000_000, 0).unwrap(),
+        };
+        let val = serde_json::to_value(&resp).unwrap();
+        assert_eq!(val["name"], "bug");
+        assert_eq!(val["color"], "#FF0000");
+        assert_eq!(val["created_by_label"], "Bob");
+        assert!(val["created_at"].is_string());
+    }
+
+    #[test]
+    fn get_label_response_nil_created_by() {
+        let resp = TaskLabelResponse {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "feature".to_string(),
+            color: "#00FF00".to_string(),
+            created_by: None,
+            created_by_label: "system".to_string(),
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+        };
+        let val = serde_json::to_value(&resp).unwrap();
+        assert!(val["created_by"].is_null());
+    }
+
+    #[test]
+    fn get_label_response_utc_timestamp_z_suffix() {
+        let resp = TaskLabelResponse {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "done".to_string(),
+            color: "#0000FF".to_string(),
+            created_by: None,
+            created_by_label: "Alice".to_string(),
+            created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        };
+        let val = serde_json::to_value(&resp).unwrap();
+        let ts = val["created_at"].as_str().unwrap();
+        assert!(ts.ends_with('Z'), "expected UTC Z-suffix, got: {ts}");
+    }
+
+    #[test]
+    fn get_label_response_has_exactly_seven_fields() {
+        let resp = TaskLabelResponse {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "x".to_string(),
+            color: "#AABBCC".to_string(),
+            created_by: None,
+            created_by_label: "y".to_string(),
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+        };
+        let val = serde_json::to_value(&resp).unwrap();
+        let obj = val.as_object().unwrap();
+        assert_eq!(
+            obj.len(),
+            7,
+            "expected 7 fields: id, group_id, name, color, created_by, created_by_label, created_at"
+        );
+    }
+
+    // ── list_task_label_assignments response shape tests ────────────────────
+
+    #[test]
+    fn assignment_row_converts_to_label_response() {
+        let row = TaskLabelAssignmentRow {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "critical".to_string(),
+            color: "#FF0000".to_string(),
+            created_by: None,
+            created_by_label: "Alice".to_string(),
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+        };
+        let resp = TaskLabelResponse::from(row);
+        assert_eq!(resp.name, "critical");
+        assert_eq!(resp.color, "#FF0000");
+        assert!(resp.created_by.is_none());
+    }
+
+    #[test]
+    fn assignment_row_with_creator_converts_correctly() {
+        let creator_id = Uuid::new_v4();
+        let row = TaskLabelAssignmentRow {
+            id: Uuid::new_v4(),
+            group_id: Uuid::new_v4(),
+            name: "feature".to_string(),
+            color: "#00FF00".to_string(),
+            created_by: Some(creator_id),
+            created_by_label: "Bob".to_string(),
+            created_at: DateTime::from_timestamp(1_000_000, 0).unwrap(),
+        };
+        let resp = TaskLabelResponse::from(row);
+        assert_eq!(resp.created_by, Some(creator_id));
+        assert_eq!(resp.created_by_label, "Bob");
+    }
+
+    #[test]
+    fn assignment_list_empty_vec_serializes_as_array() {
+        let list: Vec<TaskLabelResponse> = vec![];
+        let val = serde_json::to_value(&list).unwrap();
+        assert!(val.is_array());
+        assert_eq!(val.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn assignment_list_multiple_items_ordered_by_serialization() {
+        let items: Vec<TaskLabelResponse> = vec![
+            TaskLabelResponse {
+                id: Uuid::nil(),
+                group_id: Uuid::nil(),
+                name: "first".to_string(),
+                color: "#111111".to_string(),
+                created_by: None,
+                created_by_label: "A".to_string(),
+                created_at: DateTime::from_timestamp(100, 0).unwrap(),
+            },
+            TaskLabelResponse {
+                id: Uuid::nil(),
+                group_id: Uuid::nil(),
+                name: "second".to_string(),
+                color: "#222222".to_string(),
+                created_by: None,
+                created_by_label: "B".to_string(),
+                created_at: DateTime::from_timestamp(200, 0).unwrap(),
+            },
+        ];
+        let val = serde_json::to_value(&items).unwrap();
+        let arr = val.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "first");
+        assert_eq!(arr[1]["name"], "second");
+    }
+
+    #[test]
+    fn assignment_response_utc_timestamp_z_suffix() {
+        let row = TaskLabelAssignmentRow {
+            id: Uuid::nil(),
+            group_id: Uuid::nil(),
+            name: "tag".to_string(),
+            color: "#ABCDEF".to_string(),
+            created_by: None,
+            created_by_label: "sys".to_string(),
+            created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        };
+        let resp = TaskLabelResponse::from(row);
+        let val = serde_json::to_value(&resp).unwrap();
+        let ts = val["created_at"].as_str().unwrap();
+        assert!(ts.ends_with('Z'), "expected UTC Z-suffix, got: {ts}");
+    }
 }

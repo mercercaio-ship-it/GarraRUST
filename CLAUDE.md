@@ -377,6 +377,7 @@ O projeto utiliza [Superpowers](https://github.com/obra/superpowers) como framew
 | `/generate-docs` | Gera documentação automática |
 | `/code-review` | Revisão de código inline |
 | `/git-assist` | Ajuda com git workflow |
+| `/todo-roadmap-pilot` | Mantém TODO/ROADMAP fiéis ao repo e avança 1 passo seguro (dry-run por padrão) |
 
 ## Agents disponíveis
 

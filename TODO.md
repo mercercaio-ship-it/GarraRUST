@@ -4,14 +4,25 @@ Fila operacional curta do GarraIA/GarraRUST. Complementa `ROADMAP.md` (direção
 produto): aqui ficam o que foi concluído (com evidência), o que está parcial,
 bloqueado ou adiado, e os próximos passos curtos da próxima sessão.
 
-**Atualizado:** 2026-06-24 (America/New_York) — reconciliado por
-`todo-roadmap-pilot` contra `origin/main` @ `bde3288` (2026-06-18).
+**Atualizado:** 2026-06-24 (America/New_York) — mantido por `roadmap-todo`
+(mantenedora autônoma) sobre `origin/main` @ `3984ca1` (PR #1 mergeado).
 
 > **Fonte de evidência:** histórico de commits de `origin/main`. Os PRs vivem no
 > upstream `michelbr84`; `origin` (`mercercaio-ship-it`) sincroniza via merge —
 > os números `#NNN` referenciam PRs do upstream e servem de rastreabilidade.
 
 ---
+
+## ✅ Concluído nesta rodada (mantenedora autônoma, 2026-06-24)
+
+- **PR #1 mergeado na `main`** (`3984ca1`) — skill operacional (canônica em
+  `skills/` + registro `CLAUDE.md`) + reconciliação do backlog. Validação:
+  Coverage (build+test) verde + Clippy/MSRV/cargo-deny/CodeQL/gitleaks verdes;
+  reds pré-existentes registrados como dívida de CI (ver Próximos passos). Merge
+  **não dispara deploy** (`deploy.yml` só em tags `v*`/manual).
+- **Skill promovida a mantenedora autônoma e renomeada → `roadmap-todo`**
+  (`skills/roadmap-todo.md`); decisão registrada em **[ADR 0013](docs/adr/0013-autonomous-maintainer-skill.md)**
+  (autonomia com guardas). Entrega desta rodada (autoevolução da skill).
 
 ## ✅ Concluído desde 2026-06-10 (verificado em `origin/main`)
 
@@ -100,7 +111,7 @@ Mantido só para rastreabilidade (detalhe nas PRs / `plans/`):
 
 ## ➡️ Próximos passos recomendados
 
-> Formato de item — ver `.claude/skills/todo-roadmap-pilot/references/templates.md`.
+> Formato de item — ver `.claude/skills/roadmap-todo/references/templates.md`.
 
 ### [P1] Reconciliar checkboxes do ROADMAP §3.6/§3.8 com PRs mergeados — ⏳ pendente
 - **Prioridade:** P1
@@ -124,6 +135,26 @@ Mantido só para rastreabilidade (detalhe nas PRs / `plans/`):
 - **Validação esperada:** checklist §3.8 cruzado com PRs #706–#735.
 - **Riscos:** flip prematuro de fase → mitigar com "sem evidência total, não vira status".
 - **Status:** ⏳ pendente
+
+### [P1] Corrigir drift de formatação Rust na `main` (Format Check vermelho) — ⛔ bloqueado (toolchain)
+- **Prioridade:** P1
+- **Escopo:** rodar `cargo fmt --all` e commitar só a reformatação (zero mudança de lógica).
+- **Motivo:** `Format Check` (`cargo fmt --check --all`) está vermelho na `main` (baseline) — impede "tudo verde".
+- **Arquivos prováveis:** crates Rust com drift (descobrir via `cargo fmt --check --all`).
+- **Critério de sucesso:** `cargo fmt --check --all` verde no CI.
+- **Validação esperada:** Format Check verde no PR.
+- **Riscos:** baixo (só formatação); exige toolchain Rust.
+- **Status:** ⛔ bloqueado — sem `cargo`/`rustfmt` nesta sessão; executar quando houver toolchain ou via runner com Rust.
+
+### [P1] Resolver advisory de `cargo audit` na `main` (Security Audit vermelho) — ⏳ pendente
+- **Prioridade:** P1
+- **Escopo:** identificar o RUSTSEC apontado por `Security — cargo audit` e bumpar/ajustar a dependência (ou registrar ignore justificado em `deny.toml`/`audit.toml` + issue).
+- **Motivo:** `Security Audit` está vermelho na `main` (baseline) — dívida de segurança real.
+- **Arquivos prováveis:** `Cargo.toml` / `Cargo.lock`, `deny.toml`.
+- **Critério de sucesso:** `cargo audit` verde (ou ignore com justificativa rastreada).
+- **Validação esperada:** Security Audit verde no PR; `cargo deny check`.
+- **Riscos:** bump pode quebrar build → mitigar validando no CI antes do merge.
+- **Status:** ⏳ pendente (ler o advisory específico nos logs do CI).
 
 ### [P2] Continuar a cadência de health-run (segurança/observabilidade) — ⏳ pendente
 - **Prioridade:** P2

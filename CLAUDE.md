@@ -377,7 +377,7 @@ O projeto utiliza [Superpowers](https://github.com/obra/superpowers) como framew
 | `/generate-docs` | Gera documentação automática |
 | `/code-review` | Revisão de código inline |
 | `/git-assist` | Ajuda com git workflow |
-| `/todo-roadmap-pilot` | Mantém TODO/ROADMAP fiéis ao repo e avança 1 passo seguro (dry-run por padrão) |
+| `/roadmap-todo` | Mantenedora autônoma: mantém TODO/ROADMAP fiéis ao repo + main limpa (revisa/valida/mergeia PRs seguros, decide com evidência, registra ADR; dry-run por padrão). Ver [ADR 0013](docs/adr/0013-autonomous-maintainer-skill.md) |
 
 ## Agents disponíveis
 

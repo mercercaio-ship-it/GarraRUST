@@ -83,3 +83,6 @@ tags `v*`/manual, então merge ≠ deploy) e autoevolução estão codificados e
 - PR #1 (`3984ca1`) — criação da skill + reconciliação inicial do backlog.
 - `skills/roadmap-todo.md` — política operacional (auto-merge, loop, autoevolução).
 - `docs/adr/README.md` — convenção de ADR (MADR simplificado).
+- [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) — evidência
+  do fato load-bearing "merge ≠ deploy": bloco `on:` dispara só em `push: tags: v*`
+  e `workflow_dispatch` (não há trigger em push para branch/`main`).

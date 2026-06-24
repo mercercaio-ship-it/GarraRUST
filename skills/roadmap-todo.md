@@ -141,8 +141,9 @@ teste, build, lint, diff, log, arquivo, doc).
 7. **Executar ≤ `--max-changes` mudanças coesas** — a menor que satisfaz o critério.
 8. **Validar** o que existir: `cargo test`/`cargo check`/`cargo clippy`/`cargo fmt
    --check`, `npm test/build/lint`, typecheck, diff check, security scan
-   (gitleaks/cargo-audit). Sem toolchain local → "validação delegada ao CI"
-   (nunca fingir). Citar comando + resultado.
+   (gitleaks/cargo-audit). Use "validação delegada ao CI" **só** quando o toolchain
+   local realmente não existir; se existir, rode localmente (nunca fingir nem pular
+   validação disponível). Citar comando + resultado.
 9. **Abrir PR** (ou usar o existente do ciclo): branch dedicada, `add` seletivo,
    commit claro no padrão do repo, `gh pr create` (em fork, fixar
    `--repo <owner>/<repo> --base <base>`).
@@ -178,9 +179,11 @@ ruído alheio):
 5. **Causado pelo diff** → **corrija no PR** (validar de novo) ou bloqueie. Nunca
    mergeie um red que o próprio diff introduziu.
 
-**Merge = deploy:** antes de mergear, cheque triggers de deploy (Segurança §7).
-Depois do merge: `git fetch`, confirme `main` avançou, e revalide (CI da base /
-re-run dos checks). Falha em produção → rollback/hotfix + incidente.
+**Após QUALQUER merge** (mesmo quando merge ≠ deploy): `git fetch`, confirme que
+a `main` avançou (novo SHA) e **revalide** o estado (CI da base / re-run dos
+checks). **Merge = deploy:** antes de mergear, cheque triggers de deploy
+(Segurança §7); se a base dispara deploy, valide antes; e **se a produção falhar,
+rollback/hotfix + incidente** — este passo de rollback é o condicional ao deploy.
 
 ---
 
@@ -189,7 +192,9 @@ re-run dos checks). Falha em produção → rollback/hotfix + incidente.
 Quando uma rodada revelar que as **regras da própria skill** são insuficientes ou
 ambíguas (ex.: um caso de auto-merge não coberto), **atualize a skill**
 (`skills/roadmap-todo.md` canônica + a cópia local), valide (lint/diff +
-auto-auditoria contra este spec), abra PR e mergeie como PR do próprio ciclo.
+auto-auditoria contra este spec **+ conferir que a cópia local
+`.claude/skills/roadmap-todo/` e a canônica `skills/roadmap-todo.md` ficam
+coerentes**), abra PR e mergeie como PR do próprio ciclo.
 Registre a melhoria no relatório. Evoluções de regra de risco/segurança devem ser
 conservadoras (apertar, não afrouxar) e, se mudarem política de merge/deploy,
 acompanhar um ADR.

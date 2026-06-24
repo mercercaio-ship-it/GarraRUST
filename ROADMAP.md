@@ -772,6 +772,8 @@ Novo crate: `garraia-storage`.
 
 **Objetivo:** transformar o Group Workspace em sistema de trabalho real da família/equipe — tarefas, páginas colaborativas e, no futuro, databases com automações dirigidas por agentes Garra. Entrega em **3 tiers** com gates de adoção entre eles.
 
+> **Status reconciliado 2026-06-24 (`roadmap-todo`):** **Docs Tier 2 single-editor ENTREGUE** por evidência — schema (migrations 026–029: `doc_pages`/`doc_blocks`/`doc_page_versions`/`doc_page_mentions`), CRUD de páginas/blocos, versões + restore, duplicate, mentions + inbox e busca (`doc_pages`/`doc_blocks`) estão `[x]` com plan/GAR (PRs #706–#735). **Tier 2 NÃO está fechado:** faltam **colaboração em tempo real** (CRDT/OT + WS `/v1/doc-pages/{id}/stream`, ADR 0008) e **embeds** (task/file/chat `/garra`), e o **critério de aceite Tier 2** (edição simultânea sem perda; 500 blocos < 500ms p95; embed de task < 1s) ainda não foi validado. Próximo marco: ADR 0008 → primeiro slice de colaboração WS.
+
 #### Tier 1 — Tasks (MVP)
 
 Módulo dentro de `garraia-workspace`. Schema entregue via migration 006 com **RLS FORCE embutido desde o dia zero** (sem retrofit via 007+).

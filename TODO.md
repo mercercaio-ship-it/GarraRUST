@@ -4,8 +4,8 @@ Fila operacional curta do GarraIA/GarraRUST. Complementa `ROADMAP.md` (direção
 produto): aqui ficam o que foi concluído (com evidência), o que está parcial,
 bloqueado ou adiado, e os próximos passos curtos da próxima sessão.
 
-**Atualizado:** 2026-06-24 (America/New_York) — mantido por `roadmap-todo`
-(mantenedora autônoma) sobre `origin/main` @ `3984ca1` (PR #1 mergeado).
+**Atualizado:** 2026-06-24 ~14:00 (America/New_York) — rodada do loop horário da
+`roadmap-todo` (mantenedora autônoma) sobre `origin/main` @ `08d07c4`.
 
 > **Fonte de evidência:** histórico de commits de `origin/main`. Os PRs vivem no
 > upstream `michelbr84`; `origin` (`mercercaio-ship-it`) sincroniza via merge —
@@ -13,8 +13,15 @@ bloqueado ou adiado, e os próximos passos curtos da próxima sessão.
 
 ---
 
-## ✅ Concluído nesta rodada (mantenedora autônoma, 2026-06-24)
+## ✅ Concluído — rodadas da mantenedora autônoma (2026-06-24)
 
+- **Rodada loop ~14:00 — reconciliação §3.6/§3.8 + status Docs Tier 2.**
+  Verificado que os checkboxes de §3.6 (chat) e §3.8 (Docs Tier 2: schema
+  migrations 026–029 + endpoints `/v1/doc-pages*` + busca) **já estão `[x]` com
+  plan/GAR** — nada a reconciliar. **Docs Tier 2 NÃO fecha**: faltam colaboração
+  em tempo real (CRDT/WS, ADR 0008), embeds (task/file/chat `/garra`) e o critério
+  de aceite Tier 2. Status registrado em `ROADMAP.md` §3.8. (Sem mudança de código;
+  docs-only, reversível.)
 - **PR #1 mergeado na `main`** (`3984ca1`) — skill operacional (canônica em
   `skills/` + registro `CLAUDE.md`) + reconciliação do backlog. Validação:
   Coverage (build+test) verde + Clippy/MSRV/cargo-deny/CodeQL/gitleaks verdes;
@@ -113,28 +120,20 @@ Mantido só para rastreabilidade (detalhe nas PRs / `plans/`):
 
 > Formato de item — ver `.claude/skills/roadmap-todo/references/templates.md`.
 
-### [P1] Reconciliar checkboxes do ROADMAP §3.6/§3.8 com PRs mergeados — ⏳ pendente
+### [P1] Fechar Docs Tier 2 (§3.8): colaboração real-time + embeds — ⛔ bloqueado (código/toolchain)
 - **Prioridade:** P1
-- **Escopo:** marcar `[x]` apenas itens com PR mergeado comprovado (Docs Tier 2,
-  `/v1/me/*`). Não tocar itens sem evidência.
-- **Motivo:** ROADMAP §3.8/§5.3 estão atrás do estado real; alinha visão × fila.
-- **Arquivos prováveis:** `ROADMAP.md`
-- **Critério de sucesso:** cada `[x]` novo tem PR/commit citado; nenhum item sem
-  evidência alterado.
-- **Validação esperada:** diff revisado + `grep` dos GAR ids no histórico de commits.
-- **Riscos:** marcar item parcial como completo → mitigar exigindo evidência 1:1.
-- **Status:** ⏳ pendente
-
-### [P1] Avaliar fechamento de fase: Docs Tier 2 (§3.8) — ⏳ pendente
-- **Prioridade:** P1
-- **Escopo:** verificar se TODAS as pendências de Docs Tier 2 fecharam (CRUD,
-  blocks, versions, restore, duplicate, mentions, inbox, search).
-- **Motivo:** decidir se a subseção Docs do §3.8 pode ir a ✅ no ROADMAP.
-- **Arquivos prováveis:** `ROADMAP.md`, `plans/`
-- **Critério de sucesso:** decisão registrada com evidência; status virado só se completo.
-- **Validação esperada:** checklist §3.8 cruzado com PRs #706–#735.
-- **Riscos:** flip prematuro de fase → mitigar com "sem evidência total, não vira status".
-- **Status:** ⏳ pendente
+- **Escopo:** colaboração em tempo real (CRDT/OT + WS `/v1/doc-pages/{id}/stream` com
+  awareness, ADR [0008](docs/adr/0008-doc-collaboration.md)) e embeds (task/file/chat
+  `/garra`) — o que falta para satisfazer o critério de aceite Tier 2.
+- **Motivo:** single-editor (CRUD/versions/mentions/search/inbox) já entregue (PRs
+  #706–#735); isto é o restante para fechar Docs Tier 2.
+- **Arquivos prováveis:** `crates/garraia-gateway` (rotas WS), `garraia-db` (sync),
+  `docs/adr/0008-doc-collaboration.md`.
+- **Critério de sucesso:** 2 usuários editam a mesma página sem perder input;
+  embed de task atualiza < 1s; página 500 blocos < 500ms p95.
+- **Validação esperada:** testes de integração WS + CI verde.
+- **Riscos:** mudança de runtime ampla → fatiar em slices pequenos; precisa toolchain Rust.
+- **Status:** ⛔ bloqueado — trabalho de código (precisa `cargo`/toolchain local); fatiar em slices.
 
 ### [P1] Corrigir drift de formatação Rust na `main` (Format Check vermelho) — ⛔ bloqueado (toolchain)
 - **Prioridade:** P1

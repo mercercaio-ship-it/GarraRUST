@@ -52,6 +52,7 @@ Rationale curta ("porque sim") é sinal de que a decisão não deveria ser ADR �
 | [0010](0010-garra-learning-agent.md) | Garra Learning Agent / Self-Improving Operations Manual | ✅ accepted | 2026-05-17 | [GAR-641](https://linear.app/chatgpt25/issue/GAR-641) |
 | [0011](0011-garra-max-power.md) | GarraMaxPower — Native Agent-Advanced Mode (`garra max-power`) | ✅ accepted | 2026-05-24 | [GAR-492](https://linear.app/chatgpt25/issue/GAR-492) |
 | [0012](0012-garra-persona.md) | Persona Amistosa do Garra — tom de voz padrão (inspirado em OpenHuman) | ✅ accepted | 2026-06-01 | GAR-771 |
+| [0013](0013-autonomous-maintainer-skill.md) | Mantenedora autônoma de backlog/PR via skill `roadmap-todo` (autonomia com guardas) | ✅ accepted | 2026-06-24 | — |
 
 Legenda: ✅ accepted · 📋 proposed (aguardando execução) · 🔒 blocked (issue Linear aguardando este ADR ser escrito).
 

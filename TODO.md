@@ -1,234 +1,150 @@
 # TODO
 
-Status operacional do backlog do GarraIA/GarraRUST. Este arquivo complementa
-`ROADMAP.md`: o roadmap guarda a direção de produto; este TODO registra o que
-foi concluído, o que ficou parcial ou adiado, decisões tomadas e próximos passos
-curtos para a próxima sessão autônoma.
+Fila operacional curta do GarraIA/GarraRUST. Complementa `ROADMAP.md` (direção de
+produto): aqui ficam o que foi concluído (com evidência), o que está parcial,
+bloqueado ou adiado, e os próximos passos curtos da próxima sessão.
 
-**Atualizado:** 2026-06-10 (America/New_York)
+**Atualizado:** 2026-06-24 (America/New_York) — reconciliado por
+`todo-roadmap-pilot` contra `origin/main` @ `bde3288` (2026-06-18).
 
-## Concluído nesta sessão
+> **Fonte de evidência:** histórico de commits de `origin/main`. Os PRs vivem no
+> upstream `michelbr84`; `origin` (`mercercaio-ship-it`) sincroniza via merge —
+> os números `#NNN` referenciam PRs do upstream e servem de rastreabilidade.
 
-- GAR-835 / plan 0297 — Docs Tier 2 scaffold: migration 026 + POST/GET /v1/groups/{group_id}/doc-pages:
-  - Migration `026_doc_pages.sql`: `doc_pages` table with FORCE RLS, NULLIF fail-closed group
-    isolation policy, `GRANT SELECT/INSERT/UPDATE` to `garraia_app`, keyset + parent indexes.
-  - `WorkspaceAuditAction::DocPageCreated` → `"doc_page.created"` added to `garraia-auth`.
-  - `docs.rs`: `CreateDocPageRequest`, `DocPageResponse`, `DocPageSummary`, `ListDocPagesResponse`,
-    `ListDocPagesQuery`; `create_doc_page` (POST 201, authz DocsWrite) and `list_doc_pages`
-    (GET, cursor-keyset, optional `parent_page_id` filter, authz DocsRead); 6 unit tests pass.
-  - Routes wired in all 3 `mod.rs` branches (full / auth-stub / no-auth stub).
-  - `openapi.rs`: paths + schemas registered.
-  - ROADMAP §3.8 Tier 2: `doc_pages` schema + 2 API endpoints marked ✅.
-  - PR #706 squash-merged 2026-06-10 (`54f88bc`) — 20/20 CI green.
-  - GAR-835 → Done in Linear.
+---
 
-## Concluído em sessões anteriores
+## ✅ Concluído desde 2026-06-10 (verificado em `origin/main`)
 
-- GAR-806 / plan 0269 — GET /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}:
-  - `get_task_comment` handler in `comments.rs`: validates group_id, TasksRead check,
-    SET LOCAL both RLS configs, single query (`task_comments WHERE id=$1 AND task_id=$2 AND deleted_at IS NULL`),
-    returns `CommentResponse`; 404 for deleted/cross-group/unknown (no existence leak).
-  - Route wired as `get(tasks::get_task_comment)` alongside delete+patch in all 3 `mod.rs` branches.
-  - `super::tasks::comments::get_task_comment` added to `openapi.rs` paths list.
-  - ROADMAP §3.8 and §3.4 updated with GET single task-label (GAR-802) and GET single comment (GAR-806).
-  - 6 unit tests: serializes all fields, nil author_user_id → null, nil edited_at → null,
-    edited_at UTC ISO-8601 Z, nil UUID round-trip, task_id preserved.
-  - `cargo clippy --workspace` clean (0 warnings). 12 total comments tests pass.
-  - Branch: `routine/202506061830-get-task-comment`.
+Reconciliação dos **82 commits** mergeados após GAR-835 (PR #706, boundary do
+TODO anterior). Agrupado por tema; commits de `docs(tracking)`/`docs(plans)` e as
+notas de health run contam como **evidência**, não como entregas separadas.
 
+- **Docs Tier 2 (Notion-like) — epic expandido (7 endpoints).**
+  GAR-837 single-page CRUD (#709), GAR-840 blocks CRUD (#712), GAR-845 page
+  versions (#717), GAR-847 page duplicate (#720), GAR-850 version restore (#723),
+  GAR-853 single block fetch (#725), GAR-858 `doc_page_mentions` + inbox (#730).
+- **Self-service `/v1/me/*` + Compliance LGPD/GDPR (10 endpoints).**
+  GAR-866 list/revoke sessions (#742), GAR-869 revoke-all sessions (#747),
+  GAR-871 api-keys CRUD (#751), GAR-874 update api-key (#755), GAR-876 password
+  change (#757), GAR-881 personal audit trail (#766), GAR-884 `DELETE /v1/me`
+  soft-delete (#771), **GAR-885 `GET /v1/me/export` — LGPD art. 20 / GDPR
+  portabilidade (#774)**, **GAR-888 `POST /v1/me/anonymize` — LGPD art. 12 / GDPR
+  art. 4(5) (#777)**, GAR-860 `GET /v1/me/doc-pages` inbox (#735).
+- **Groups & chat members (2).** GAR-864 `GET` single chat member (#738),
+  GAR-890 `DELETE /v1/groups/{id}` owner-only soft-delete (#779).
+- **Busca unificada — slices 16+17.** GAR-856 `types=doc_pages` e
+  `types=doc_blocks` (#728).
+- **Qualidade / mutation testing.** GAR-891 Q6.15 — kill 4 mutants em
+  `password.rs` + `audit_workspace.rs` (#780).
+- **Deps / CI / segurança de dependências.** GAR-894 split sqlx + fix
+  **RUSTSEC-2026-0182** (wasmtime-wasi 45.0.2) (#787), GAR-844 retry de CI em
+  401 transitório (#716); chores: bump `@playwright/test` 1.60→1.61 (#781),
+  branch-cleanup (#741).
+- **Cadência de segurança — health runs 107–145.** Notas de status operacionais
+  (GAR-836…GAR-893, ~31 entradas, PRs #707–#786). São registros de
+  saúde/observabilidade, **não** correções de vulnerabilidade.
 
-- GAR-800 / plan 0266 — PATCH /v1/groups/{group_id}/task-labels/{label_id}:
-  - `PatchTaskLabelRequest { name, color }` + `patch_task_label` handler in `labels.rs`.
-  - COALESCE UPDATE (at least one field required → 400, 404 on 0 rows, 409 on duplicate name).
-  - `WorkspaceAuditAction::TaskLabelEdited` added to `audit_workspace.rs` (PII-safe).
-  - Routes wired in all 3 `mod.rs` branches (full / auth-only stub / no-auth stub).
-  - OpenAPI: `super::tasks::labels::patch_task_label` path + `PatchTaskLabelRequest` schema.
-  - 6 unit tests: name-only / color-only / both-absent roundtrip, hex valid/invalid, response nil-UUID.
-  - `cargo clippy --workspace` clean; 634 unit tests pass. Branch: `routine/202506060020-task-label-patch`.
-  - PR pending CI.
+> ⚠️ **Não reivindicado** (lacunas na sequência, sem evidência em `origin/main`):
+> GAR-851, GAR-862, GAR-875, GAR-887, GAR-889 — não marcar como concluído.
 
-- GAR-798 / plan 0265 — GET /v1/threads/{thread_id}:
-  - `get_thread` handler in `chats.rs` (before `patch_thread`): validates group_id, ChatsRead check,
-    SET LOCAL both RLS configs, single JOIN query (`message_threads JOIN chats WHERE group_id = $2`),
-    returns `ThreadDetailResponse`; 404 for cross-group or unknown threads (no existence leak).
-  - Route wired as `get(chats::get_thread).patch(chats::patch_thread)` in all 3 `mod.rs` branches.
-  - `super::chats::get_thread` added to `openapi.rs` paths list.
-  - Removed now-unused standalone `patch` import from `mod.rs`.
-  - 6 unit tests: serializes all fields, nil title → null, nil created_by → null,
-    unresolved → null resolved_at, resolved → UTC ISO-8601 Z timestamp, nil UUID round-trip.
-  - `cargo clippy --workspace` clean (0 warnings). Branch: `routine/202506051820-get-thread`.
-  - PR pending CI.
+---
 
-- PR #643 (docs/mark-plan-0263-merged) — merged (20/20 CI green); GAR-794 → Done in Linear.
+## ✅ Concluído em sessões anteriores (arquivo compacto)
 
-- GAR-795 / plan 0264 — PATCH /v1/groups/{group_id}/tasks/{task_id}/comments/{comment_id}:
-  - `TaskCommentEdited` variant added to `WorkspaceAuditAction` in `garraia-auth`.
-  - `EditCommentRequest` + `EditedCommentResponse` types in `comments.rs`.
-  - `patch_task_comment` handler: sender-only (404 for other authors), body_md 1-50k validated,
-    `edited_at = now()` in same UPDATE, audit `body_len` only (no PII).
-  - Route wired in all 3 `mod.rs` branches; OpenAPI path + components registered.
-  - 6 unit tests pass. `cargo clippy --workspace` green (622+6 tests, 0 warnings).
-  - Closes CRUD gap: POST/GET/DELETE were GAR-520; PATCH was missing.
-  - Squash-merged PR #644 (`6974812`) 2026-06-05 — 20/20 CI green.
-  - GAR-795 → Done in Linear.
+Mantido só para rastreabilidade (detalhe nas PRs / `plans/`):
 
-- GAR-794 / plan 0263 — POST /v1/me/invites/{invite_id}/accept:
-  - `accept_my_invite` handler in `me.rs`: UUID-based authenticated accept.
-  - Atomic tx: UPDATE group_invites (with all terminal guards in WHERE) + INSERT group_members + audit InviteAccepted.
-  - 410 (expired) distinguished from 404 via follow-up SELECT when UPDATE returns None.
-  - 409 (already member) via SQLSTATE 23505 on group_members INSERT.
-  - Route registered in all 3 mod.rs branches; OpenAPI path + AcceptMyInviteResponse schema registered.
-  - 6 unit tests covering: serialization, no-PII fields, role variants, nil UUID round-trip, PendingInviteSummary excludes accepted_at, exactly-3-fields shape.
-  - Completes the invite lifecycle: list (GAR-777) → accept (GAR-794) / decline (GAR-783); token-based accept (plan 0019) unchanged.
+- GAR-806 GET task comment · GAR-800 PATCH task-label · GAR-798 GET thread ·
+  GAR-795 PATCH task comment (#644) · GAR-794 POST accept invite ·
+  GAR-777 GET `/v1/me/invites` (#621) · GAR-780 GET/DELETE invite revocation (#625) ·
+  GAR-767 GET `/v1/me/files` · GAR-765 GET `/v1/me/chats` ·
+  GAR-733 search slice 14 (groups, #561) · GAR-705 health run 30 (#508) ·
+  GAR-467 Q6.5 mutation/audit (#509) · GAR-702 health run 28 (#504) ·
+  GAR-703 search slice 5 (files, #505) · GAR-697 search slice 4 (has_attachment).
+- GAR-835 Docs Tier 2 scaffold — migration 026 + POST/GET `/v1/.../doc-pages`
+  (PR #706, `54f88bc`). *(boundary desta reconciliação)*
 
-## Concluído em sessões anteriores
+---
 
-- GAR-777 / plan 0255 — GET /v1/me/invites (caller-scoped pending group invites inbox):
-  - Merged PR #621 (`762d63c`) after CI went 20/20 green.
-  - GAR-777 → Done in Linear.
-  - Bookkeeping PR #624 (docs/mark-plan-0255-merged) open, CI running.
+## 🟡 Parcialmente feito
 
-- GAR-780 / plan 0257 — GET + DELETE /v1/groups/{id}/invites/{invite_id} (invite revocation):
-  - Migration 024: `revoked_at` + `revoked_by` columns on `group_invites`; recreated partial unique index to exclude revoked rows (enables re-invite after revocation).
-  - `WorkspaceAuditAction::InviteRevoked` variant + `"invite.revoked"` string + test assertion.
-  - `list_invites` WHERE updated: `AND revoked_at IS NULL`.
-  - `get_invite` handler: returns `InviteSummary` (404 if not found/accepted/revoked).
-  - `revoke_invite` handler: `UPDATE SET revoked_at = now()`, emits `InviteRevoked` audit event, 204 No Content (404 if already accepted/revoked).
-  - Routes in all 3 `mod.rs` branches. OpenAPI paths + schemas (`InviteSummary`, `ListInvitesResponse`).
-  - 5 unit tests (serialization, cursor, role round-trip, no `revoked_at` in response).
-  - Squash-merged PR #625 (`46a8658`) 2026-06-03 — 20/20 CI green.
-  - GAR-780 → Done in Linear.
-  - Bookkeeping PR (docs/mark-plan-0257-merged) open.
+- **GAR-603 — Runpod Load Balancer Serverless.**
+  - Feito: `garra start` HTTP, bind `0.0.0.0`, rotas `/ping` e `/health`,
+    `PORT`/`HOST`, Dockerfile sem REPL, docs de deployment.
+  - Falta: smoke Docker local + smoke público
+    `https://<ENDPOINT_ID>.api.runpod.ai/ping`; suporte a `PORT_HEALTH` separado
+    de `PORT`. → ver bloqueio abaixo.
 
-## Concluído em sessões anteriores
+---
 
+## ⛔ Bloqueado (precisa de autorização ou infra externa)
 
-- GAR-767 / plan 0246 — GET /v1/me/files (caller-scoped uploaded-files inbox):
-  - `ListMyFilesQuery` struct with `group_id` (required), `after`, `limit`, `folder_id` (optional).
-  - `MyFileSummary` fields: `id`, `group_id`, `name`, `mime_type`, `size_bytes`, `folder_id` (skip_if_none), `created_at`, `updated_at` (skip_if_none).
-  - `MyFilesResponse` with `items` + `next_cursor` (skip_serializing_if None).
-  - 4-branch query (cursor × folder_id filter), keyset on `(files.created_at DESC, files.id DESC)`.
-  - Route `.route("/v1/me/files", get(me::list_my_files))` registered in all 3 `mod.rs` branches.
-  - OpenAPI annotation + component registration in `openapi.rs`.
-  - 8 new unit tests (serialization, limit clamp, folder filter, cursor, large size).
-  - Branch: `routine/202506010015-me-files-inbox`. GAR-767 In Progress → Done pending CI.
-
-- GAR-765 / plan 0245 — GET /v1/me/chats (caller-scoped chat membership inbox):
-  - `ListMyChatsQuery` struct with `group_id` (required), `after`, `limit`, `type` (optional).
-  - `ChatMembershipSummary` fields: `chat_id`, `group_id`, `name`, `type`, `role`, `joined_at`, `muted`, `last_read_at`.
-  - `MyChatsMembershipResponse` with `items` + `next_cursor` (skip_serializing_if None).
-  - 4-branch query (cursor × type filter), keyset on `(cm.joined_at DESC, cm.chat_id DESC)`.
-  - Route `.route("/v1/me/chats", get(me::list_my_chats))` registered in `mod.rs`.
-  - OpenAPI annotation + component registration in `openapi.rs`.
-  - 8 new unit tests (serialization, type filter validation, cursor, muted/last_read_at).
-  - All CI checks expected green (no migration, additive handler only).
-  - Branch: `routine/202605311818-me-chats-inbox`. GAR-765 In Progress → Done.
-
-## Concluído em sessões anteriores
-
-- GAR-733 / plan 0215 — Search slice 14 (`types=groups` group name FTS):
-  - `SearchResultType::Group` variant; `include_groups: bool` in `ValidatedSearch`.
-  - `parse_and_validate`: recognizes `"groups"`, rejects non-user scope with 400.
-  - `GroupSearchRow` struct + `fetch_groups()` async (runtime `to_tsvector('simple', g.name)`).
-  - Handler block: `if validated.include_groups { ... }` mapping to `SearchResult`.
-  - 6 unit tests (scope guards + multi-type combos). No migration needed — FORCE RLS migration 018.
-  - PR #561 squash-merged 2026-05-29 (`1bb2f10`). GAR-733 Done in Linear.
-
-- GAR-705 / plan 0187 — Health run 30: all surfaces clean, priority (i). PR #508 squash-merged (`ef040ad`).
-
-- GAR-467 / plan 0188 — Q6.5 Mutation Testing — audit_event observability coverage:
-  - Added `count_audit_action(...) == 1` assertion to all 7 terminals of `verify_credential_with_ctx`.
-  - Added `row.ip.is_some()` assertion to all non-argon2id terminals (T3–8).
-  - New test `null_stored_hash_emits_unknown_hash_audit`: seeds user with NULL password_hash,
-    asserts `Err(UnknownHashFormat)` + 1 audit row committed + ip populated.
-  - Total: 11 integration tests (was 10). Tests-only PR, no production code changes.
-  - PR #509 squash-merged (`a1b0fdd`).
-
-## Concluído em sessões anteriores
-
-- GAR-702 / plan 0184 — Health run 28: all surfaces clean, priority (i). PR #504 squash-merged.
-
-- GAR-703 / plan 0185 — Search slice 5 (`types=files` file name FTS):
-  - `SearchResultType::File` variant added.
-  - `include_files: bool` in `ValidatedSearch`.
-  - `parse_and_validate`: recognizes `"files"`, rejects non-group scope.
-  - `FileSearchRow` struct + `fetch_files()` async function (runtime tsvector 'simple').
-  - Handler: `if validated.include_files { ... }` block mapping to `SearchResult`.
-  - 6 new unit tests; `unknown_type_rejected` updated to use `"tasks"` (not `"files"`).
-  - ROADMAP.md + plans/README.md + TODO.md updated.
-  - Branch: `routine/202605251215-search-slice5-files`, PR #505, merged `bb8c040`.
-
-- GAR-697 / plan 0179 — Search slice 4 (`has_attachment` filter):
-  - Migration 020 (`message_attachments` M:N join table, FORCE RLS via JOIN
-    through messages, índice `message_attachments_message_idx` para o EXISTS
-    subquery path).
-  - `search.rs`: `SearchQuery.has_attachment: Option<bool>`, validação (rejeita
-    quando `types` não inclui `messages`), predicado SQL EXISTS-equality trick.
-  - Tests: 5 unit tests novos (slice 4 block), S18/S19/S20 integration scenarios.
-  - ROADMAP.md + plans/README.md + TODO.md atualizados.
-  - Branch: `routine/202605250015-search-has-attachment`, PR em revisão.
-
-## Parcialmente concluído
-
-- GAR-603 Runpod Load Balancer Serverless:
-  - Concluído por evidência estática/docs: `garra start` em modo HTTP,
-    container bindando `0.0.0.0`, rotas `/ping` e `/health`, `PORT`/`HOST`,
-    Dockerfile sem REPL, receita local Docker, settings Runpod e distinção
-    queue-based vs Load Balancer.
-  - Pendente: smoke Docker local nesta sessão e smoke público
-    `https://<ENDPOINT_ID>.api.runpod.ai/ping`.
-  - Pendente técnico: suporte a `PORT_HEALTH` separado quando a health port
-    precisar diferir de `PORT`; hoje a documentação exige `PORT_HEALTH=PORT`.
-
-## Adiado com justificativa
-
-- GAR-372 / Fase 2.1 RAG embeddings: adiado porque a próxima entrega real
-  exige toolchain Rust e testes; o ambiente local desta sessão não tinha
-  `cargo`, `rustc` ou `rustfmt`.
-- GAR-374 / Object storage S3-compatible validation: adiado por depender de
+- **Smoke Docker/Runpod do GAR-603.** Motivo: exige runtime Docker e/ou endpoint
+  Runpod público — ação operacional/infra fora do escopo seguro de docs. Destrava
+  com autorização + ambiente Docker.
+- **GAR-374 — validação object storage S3-compatible.** Motivo: depende de
   MinIO/S3/R2/GCS ou CI com serviço externo configurado.
-- GAR-410 / CredentialVault final: adiado por ser item crítico de segurança,
-  amplo e inadequado para alteração sem toolchain local e validação profunda.
-- GAR-504 / benchmark evidence run: adiado por depender de infra externa
-  (droplet/host dedicado).
-- Execução async/provider-backed das native skills GarraMaxPower: adiada para
-  slice próprio após decidir o fechamento do épico GAR-492.
+- **GAR-504 — benchmark evidence run.** Motivo: depende de host dedicado.
+- **GAR-410 — CredentialVault final.** Motivo: item crítico/amplo de segurança;
+  exige toolchain Rust local + revisão profunda.
 
-## Novas pendências encontradas
+---
 
-- O repositório não tinha `TODO.md`; manter este arquivo atualizado em toda
-  sessão autônoma daqui para frente.
-- O ambiente local tinha `git`, `node` e `rg`, mas não tinha `cargo`,
-  `rustc`, `rustfmt`, `gitleaks` ou `markdownlint`. Mudanças de runtime devem
-  esperar toolchain local ou depender explicitamente de CI no PR.
-- `ROADMAP.md` ainda contém vários itens antigos marcados como `[ ]` que podem
-  estar parcialmente entregues por PRs anteriores. Próxima limpeza deve
-  reconciliar apenas itens com evidência clara para evitar falsear status.
-- `GAR-492` está em In Review: decidir se fecha como MVP completo ou se mantém
-  aberto somente até abrir follow-ups separados.
+## ⏳ Adiado com justificativa
 
-## Decisões tomadas
+- **GAR-372 / Fase 2.1 — RAG embeddings.** Exige toolchain Rust + testes; adiar
+  até ambiente com `cargo`/`rustc`.
+- **Execução async/provider-backed das native skills (GarraMaxPower).** Slice
+  próprio, após decidir o fechamento do épico.
 
-- Não alterar runtime Rust nesta sessão: sem toolchain local, o caminho seguro
-  foi documentação, rastreabilidade e reconciliação de backlog.
-- Marcar GAR-603 como parcialmente concluído, não totalmente fechado: a
-  implementação/documentação está presente, mas falta prova operacional recente
-  em Docker e Runpod público.
-- Criar `TODO.md` como backlog operacional curto, evitando sobrecarregar
-  `ROADMAP.md` com detalhes de sessão.
+---
 
-## Próximos passos recomendados
+## ➡️ Próximos passos recomendados
 
-1. Rodar smoke Docker GAR-603:
-   `docker build -t garraia:local .`,
-   `docker run --rm -p 3888:3888 garraia:local`,
-   `curl -fsS http://localhost:3888/ping`,
-   `curl -fsS http://localhost:3888/health`.
-2. Rodar smoke público Runpod quando houver endpoint disponível:
-   `curl -fsS https://<ENDPOINT_ID>.api.runpod.ai/ping`.
-3. Abrir follow-up para `PORT_HEALTH` separado somente se Runpod exigir health
-   listener distinto de `PORT`.
-4. Decidir destino de GAR-492: fechar épico como MVP completo ou abrir issues
-   separadas para dogfood em bug real e execução async/provider-backed.
-5. Preparar ambiente local com Rust toolchain para permitir mudanças de código
-   mais ambiciosas nas próximas sessões.
+> Formato de item — ver `.claude/skills/todo-roadmap-pilot/references/templates.md`.
+
+### [P1] Reconciliar checkboxes do ROADMAP §3.6/§3.8 com PRs mergeados — ⏳ pendente
+- **Prioridade:** P1
+- **Escopo:** marcar `[x]` apenas itens com PR mergeado comprovado (Docs Tier 2,
+  `/v1/me/*`). Não tocar itens sem evidência.
+- **Motivo:** ROADMAP §3.8/§5.3 estão atrás do estado real; alinha visão × fila.
+- **Arquivos prováveis:** `ROADMAP.md`
+- **Critério de sucesso:** cada `[x]` novo tem PR/commit citado; nenhum item sem
+  evidência alterado.
+- **Validação esperada:** diff revisado + `grep` dos GAR ids no histórico de commits.
+- **Riscos:** marcar item parcial como completo → mitigar exigindo evidência 1:1.
+- **Status:** ⏳ pendente
+
+### [P1] Avaliar fechamento de fase: Docs Tier 2 (§3.8) — ⏳ pendente
+- **Prioridade:** P1
+- **Escopo:** verificar se TODAS as pendências de Docs Tier 2 fecharam (CRUD,
+  blocks, versions, restore, duplicate, mentions, inbox, search).
+- **Motivo:** decidir se a subseção Docs do §3.8 pode ir a ✅ no ROADMAP.
+- **Arquivos prováveis:** `ROADMAP.md`, `plans/`
+- **Critério de sucesso:** decisão registrada com evidência; status virado só se completo.
+- **Validação esperada:** checklist §3.8 cruzado com PRs #706–#735.
+- **Riscos:** flip prematuro de fase → mitigar com "sem evidência total, não vira status".
+- **Status:** ⏳ pendente
+
+### [P2] Continuar a cadência de health-run (segurança/observabilidade) — ⏳ pendente
+- **Prioridade:** P2
+- **Escopo:** próxima nota de health run (146+), só registro/doc.
+- **Motivo:** manter a varredura contínua de superfícies.
+- **Arquivos prováveis:** docs de tracking / ROADMAP §1.5
+- **Critério de sucesso:** nota datada com superfícies verificadas.
+- **Validação esperada:** CI verde no PR.
+- **Riscos:** baixo (docs).
+- **Status:** ⏳ pendente
+
+### [P2] Preparar toolchain Rust local — ⛔ bloqueado (depende do ambiente)
+- **Motivo do bloqueio:** sem `cargo`/`rustc`/`rustfmt` local, a validação de
+  runtime depende do CI no PR. Instalar a toolchain destrava GAR-372/GAR-410 e
+  mudanças de código mais ambiciosas.
+
+---
+
+## Notas de reconciliação (constantes)
+
+- Validação de runtime Rust depende do CI quando a toolchain não está local
+  (ambiente desta sessão não tinha `cargo`/`rustc`/`rustfmt`/`gitleaks`/`markdownlint`).
+- A evidência canônica de "concluído" é o histórico de `origin/main`; PRs no
+  upstream `michelbr84`.

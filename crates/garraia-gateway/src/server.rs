@@ -882,6 +882,15 @@ impl GatewayServer {
                 push_channels.contagens(),
             )));
 
+        // #1670: a tool de consulta ao catálogo de funcionalidades embutido.
+        // Mesma janela do `garra_status` acima (depois dos push, antes do
+        // primeiro turno de canal pull): o catálogo é estático e vem do
+        // binário, mas a tool precisa do `AppState` para aplicar a mesma
+        // decisão de operador do `garra_status` em turnos restritos.
+        state.agents.register_tool(Box::new(
+            crate::tools::catalog_tool::GarraCapabilitiesTool::new(&state),
+        ));
+
         // #1669: o diagnostico nativo da instalacao — mesma janela de registro
         // do `garra_status` (depois dos canais push, antes de qualquer canal
         // pull rodar turno). Somente leitura, sem shell, e fail-closed para

@@ -36,7 +36,7 @@ sha2 = "0.10"
 # Sem a chave, conteudo de terceiro devolvido por `web_fetch`/`file_read`/MCP
 # nao consegue cunhar um marcador que bata com comando nenhum. Mesmas versoes
 # ja usadas pelo `garraia-auth`.
-hmac = "0.12"
+hmac = "0.13"
 getrandom = "0.4"
 
 rmcp = { workspace = true, features = ["client", "transport-child-process", "transport-io"], optional = true }

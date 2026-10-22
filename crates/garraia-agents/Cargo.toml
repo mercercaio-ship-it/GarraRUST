@@ -30,7 +30,7 @@ chrono = { workspace = true, features = ["serde"] }
 # criptografia — e identificador —, mas colisao entre dois comandos
 # diferentes seria um bug de seguranca, entao vale um digest de verdade.
 # Ja esta no Cargo.lock via garraia-channels; nao traz arvore nova.
-sha2 = "0.10"
+sha2 = "0.11"
 # #1078 item 2 (achado ALTO da auditoria): a impressao digital do pedido e um
 # HMAC com chave aleatoria por processo, e nao um hash de entradas publicas.
 # Sem a chave, conteudo de terceiro devolvido por `web_fetch`/`file_read`/MCP
